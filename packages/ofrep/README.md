@@ -7,14 +7,22 @@ management system. Implement it and every community-maintained OFREP provider ca
 talk to you; no bespoke SDK, no per-language client.
 
 This package is a transcription of the [OFREP OpenAPI document][spec] (v0.3.0)
-into [toad-contracts][toad] routes and [valibot][valibot] schemas. It is a
+into [toad-contracts][toad] routes and [Zod Mini][zod] schemas. It is a
 specification, not an implementation: it describes both sides of the wire and
 implements neither. It also does not depend on `@kurenwimpel/core`, so it stays
 usable as a plain OFREP contract.
 
 [spec]: https://github.com/open-feature/protocol/blob/main/service/openapi.yaml
 [toad]: https://github.com/kibertoad/toad-contracts
-[valibot]: https://valibot.dev
+[zod]: https://zod.dev/packages/mini
+
+`zod` is a peer dependency, so a consumer keeps one copy and picks the version —
+which matters here, since the schemas this package exports are parsed with the
+consumer's zod rather than its own.
+
+```sh
+pnpm add @kurenwimpel/ofrep zod
+```
 
 ## Routes
 
@@ -27,14 +35,14 @@ Both are exported individually and together as `OFREP_CONTRACTS`.
 
 ```ts
 import { describeApiContract } from '@toad-contracts/core';
-import { safeParse } from 'valibot';
+import * as z from 'zod/mini';
 import { evaluateFlagContract } from '@kurenwimpel/ofrep';
 
 describeApiContract(evaluateFlagContract); // 'POST /ofrep/v1/evaluate/flags/:key'
 evaluateFlagContract.pathResolver({ key: 'new-checkout' }); // '/ofrep/v1/evaluate/flags/new-checkout'
 
-const body = safeParse(evaluateFlagContract.requestBodySchema, await request.json());
-const ok = safeParse(evaluateFlagContract.responsesByStatusCode[200], payload);
+const body = z.safeParse(evaluateFlagContract.requestBodySchema, await request.json());
+const ok = z.safeParse(evaluateFlagContract.responsesByStatusCode[200], payload);
 ```
 
 Every schema is exported on its own too, under the name the specification gives it
@@ -55,10 +63,17 @@ than by ordering the union. Without that, any payload whose `value` matched none
 of the typed branches — `value: null`, say — would fall through and be reported to
 the caller as "use your hard-coded default".
 
-**`type: object` excludes arrays.** valibot's `record` disagrees: it accepts
-`[1, 2]` and silently rewrites it to `{ "0": 1, "1": 2 }`. A `check` cannot catch
-that, because it runs on the already-rewritten output. So `metadata` and object
-flag values are guarded _before_ `record` sees the input.
+**`type: object` excludes arrays**, and `z.record` agrees — it rejects an array
+and a null rather than coercing either into an object, so `metadata` and object
+flag values need no guard beyond the record itself. The tempting loosening is
+`z.unknown()` for "any JSON"; that would admit both and quietly widen what the
+protocol says a flag can hold, which is why the exclusion is asserted.
+
+**Zod Mini rather than Zod classic.** The functional API tree-shakes: a consumer
+that imports one schema does not pull in every checker Zod ships. The cost is no
+method chaining — `z.optional(z.string())` and `z.string().check(z.minLength(1))`
+in place of `z.string().min(1).optional()`. Both compile to the same Standard
+Schema, so `@toad-contracts/core` neither knows nor cares which was used.
 
 **Event streams are exclusive.** `eventStream` carries either `url` or `endpoint`,
 never both. Each arm of the union declares the other field `optional(never())`, so

@@ -2,7 +2,7 @@
  * Shared building blocks of the OFREP contract: the pieces the specification
  * factors out into `components/schemas` and references from more than one place.
  *
- * Every object schema in this package is a valibot `looseObject`. OFREP is a
+ * Every object schema in this package is a zod `looseObject`. OFREP is a
  * versioned, still-evolving protocol whose implementations are told to ignore
  * fields they do not recognise, so unknown properties are carried through the
  * parse rather than stripped (`object`) or rejected (`strictObject`). A client
@@ -10,18 +10,7 @@
  * server keeps whatever a newer client sent.
  */
 
-import type { InferOutput } from 'valibot';
-import {
-  boolean,
-  custom,
-  intersect,
-  looseObject,
-  number,
-  picklist,
-  record,
-  string,
-  union,
-} from 'valibot';
+import * as z from 'zod/mini';
 
 /** The protocol revision this contract was transcribed from. */
 export const OFREP_PROTOCOL_VERSION = '0.3.0';
@@ -33,38 +22,31 @@ export const OFREP_BASE_PATH = '/ofrep/v1';
 export const OFREP_EVALUATE_PATH = `${OFREP_BASE_PATH}/evaluate/flags`;
 
 /**
- * JSON Schema's `type: object` excludes arrays, but valibot's `record` accepts
- * one and silently rewrites it to `{ "0": ... }`. A `check` cannot undo that —
- * it runs on the already-rewritten output — so arrays are rejected by this
- * guard *before* any `record` sees them.
+ * `type: object` with `additionalProperties: true`: any JSON object, no
+ * constraint on its values.
+ *
+ * JSON Schema's `type: object` excludes arrays and null, and zod's `record`
+ * agrees — it rejects both rather than coercing an array into `{ "0": ... }`.
+ * That is what makes this a faithful reading rather than a lenient one, and it
+ * is worth knowing before anyone loosens it to `z.unknown()`.
  */
-const isJsonObject = (input: unknown): boolean =>
-  typeof input === 'object' && input !== null && !Array.isArray(input);
+export const jsonObjectSchema = z.record(z.string(), z.unknown());
 
-/** `type: object` with `additionalProperties: true`: any JSON object, no constraint on its values. */
-export const jsonObjectSchema = custom<Readonly<Record<string, unknown>>>(
-  isJsonObject,
-  'Expected a JSON object',
-);
-
-export type JsonObject = InferOutput<typeof jsonObjectSchema>;
+export type JsonObject = z.infer<typeof jsonObjectSchema>;
 
 /** `components/schemas/key` — the unique identifier of a feature flag. */
-export const flagKeySchema = string();
+export const flagKeySchema = z.string();
 
 /** `components/schemas/errorDetails` — human-readable context for logs and debugging. */
-export const errorDetailsSchema = string();
+export const errorDetailsSchema = z.string();
 
 /**
  * `components/schemas/metadata` — arbitrary flag or flag-set metadata for
  * telemetry and documentation. Values are restricted to JSON primitives.
  */
-export const metadataSchema = intersect([
-  jsonObjectSchema,
-  record(string(), union([boolean(), string(), number()])),
-]);
+export const metadataSchema = z.record(z.string(), z.union([z.boolean(), z.string(), z.number()]));
 
-export type OfrepMetadata = InferOutput<typeof metadataSchema>;
+export type OfrepMetadata = z.infer<typeof metadataSchema>;
 
 /**
  * Resolution reasons OFREP admits. Narrower than the OpenFeature specification's
@@ -76,7 +58,7 @@ export const OFREP_REASONS = ['STATIC', 'TARGETING_MATCH', 'SPLIT', 'DISABLED', 
 
 export type OfrepReason = (typeof OFREP_REASONS)[number];
 
-export const ofrepReasonSchema = picklist(OFREP_REASONS);
+export const ofrepReasonSchema = z.enum(OFREP_REASONS);
 
 /**
  * Error codes a single-flag evaluation may fail with. `FLAG_NOT_FOUND` is
@@ -93,7 +75,7 @@ export const OFREP_EVALUATION_ERROR_CODES = [
 
 export type OfrepEvaluationErrorCode = (typeof OFREP_EVALUATION_ERROR_CODES)[number];
 
-export const ofrepEvaluationErrorCodeSchema = picklist(OFREP_EVALUATION_ERROR_CODES);
+export const ofrepEvaluationErrorCodeSchema = z.enum(OFREP_EVALUATION_ERROR_CODES);
 
 /** The sole error code carried by a 404 response body. */
 export const FLAG_NOT_FOUND_ERROR_CODE = 'FLAG_NOT_FOUND';
@@ -105,6 +87,6 @@ export const FLAG_NOT_FOUND_ERROR_CODE = 'FLAG_NOT_FOUND';
  * treats it as optional, so a client that evaluates without a subject still has
  * to supply one.
  */
-export const evaluationContextSchema = looseObject({ targetingKey: string() });
+export const evaluationContextSchema = z.looseObject({ targetingKey: z.string() });
 
-export type OfrepEvaluationContext = InferOutput<typeof evaluationContextSchema>;
+export type OfrepEvaluationContext = z.infer<typeof evaluationContextSchema>;

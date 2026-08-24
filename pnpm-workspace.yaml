@@ -11,3 +11,9 @@ dedupePeerDependents: true
 allowBuilds:
   esbuild: true
   workerd: true
+
+# pnpm holds back freshly published versions by default. The zod adapter was
+# released after this package needed it, so it is exempted by exact version —
+# a new release still waits out the delay.
+minimumReleaseAgeExclude:
+  - '@toad-contracts/zod@0.2.0'

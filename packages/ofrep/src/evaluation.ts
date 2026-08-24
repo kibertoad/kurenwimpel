@@ -3,19 +3,7 @@
  * and the three failure bodies.
  */
 
-import type { InferOutput } from 'valibot';
-import {
-  boolean,
-  integer,
-  literal,
-  looseObject,
-  never,
-  number,
-  optional,
-  pipe,
-  string,
-  union,
-} from 'valibot';
+import * as z from 'zod/mini';
 
 import {
   errorDetailsSchema,
@@ -29,39 +17,45 @@ import {
 } from './common.js';
 
 /** `components/schemas/evaluationRequest`. */
-export const evaluationRequestSchema = looseObject({ context: evaluationContextSchema });
+export const evaluationRequestSchema = z.looseObject({ context: evaluationContextSchema });
 
-export type OfrepEvaluationRequest = InferOutput<typeof evaluationRequestSchema>;
+export type OfrepEvaluationRequest = z.infer<typeof evaluationRequestSchema>;
 
 /** Properties every successful evaluation carries, whatever the flag's type. */
-const evaluationSuccessEntries = {
+const evaluationSuccessShape = {
   key: flagKeySchema,
   reason: ofrepReasonSchema,
-  variant: optional(string()),
-  metadata: optional(metadataSchema),
+  variant: z.optional(z.string()),
+  metadata: z.optional(metadataSchema),
 };
 
 /** `components/schemas/booleanFlag`. */
-export const booleanEvaluationSchema = looseObject({
-  ...evaluationSuccessEntries,
-  value: boolean(),
+export const booleanEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
+  value: z.boolean(),
 });
 
 /** `components/schemas/stringFlag`. */
-export const stringEvaluationSchema = looseObject({ ...evaluationSuccessEntries, value: string() });
+export const stringEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
+  value: z.string(),
+});
 
 /** `components/schemas/integerFlag`. */
-export const integerEvaluationSchema = looseObject({
-  ...evaluationSuccessEntries,
-  value: pipe(number(), integer()),
+export const integerEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
+  value: z.int(),
 });
 
 /** `components/schemas/floatFlag`. */
-export const floatEvaluationSchema = looseObject({ ...evaluationSuccessEntries, value: number() });
+export const floatEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
+  value: z.number(),
+});
 
 /** `components/schemas/objectFlag`. */
-export const objectEvaluationSchema = looseObject({
-  ...evaluationSuccessEntries,
+export const objectEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
   value: jsonObjectSchema,
 });
 
@@ -69,26 +63,27 @@ export const objectEvaluationSchema = looseObject({
  * `components/schemas/codeDefaultFlag` — the server resolved the flag but is
  * telling the caller to fall back to the default hard-coded at the call site.
  *
- * The distinguishing feature is the *absence* of `value`, which `optional(never())`
- * is what enforces: a missing key passes, any present key fails. Without it this
- * branch would swallow every payload whose `value` did not match one of the typed
- * branches above — `value: null`, say — and report it as a code default.
+ * The distinguishing feature is the *absence* of `value`, which
+ * `optional(never())` is what enforces: a missing key passes, any present key
+ * fails. Without it this branch would swallow every payload whose `value` did
+ * not match one of the typed branches above — `value: null`, say — and report it
+ * as a code default.
  */
-export const codeDefaultEvaluationSchema = looseObject({
-  ...evaluationSuccessEntries,
-  value: optional(never()),
+export const codeDefaultEvaluationSchema = z.looseObject({
+  ...evaluationSuccessShape,
+  value: z.optional(z.never()),
 });
 
 /**
  * `components/schemas/evaluationSuccess` — the `oneOf` over the six flag types.
  *
- * Order is load-bearing between the two numeric branches only: valibot returns
- * the first branch that matches, so `integer` must precede `float` for `value: 1`
- * to be reported as an integer. The spec's `oneOf` is strictly speaking violated
- * by whole numbers, which satisfy both `integerFlag` and `floatFlag`; every OFREP
+ * Order is load-bearing between the two numeric branches only: zod returns the
+ * first branch that matches, so `integer` must precede `float` for `value: 1` to
+ * be reported as an integer. The spec's `oneOf` is strictly speaking violated by
+ * whole numbers, which satisfy both `integerFlag` and `floatFlag`; every OFREP
  * implementation has the same ambiguity and both branches infer to `number`.
  */
-export const evaluationSuccessSchema = union([
+export const evaluationSuccessSchema = z.union([
   booleanEvaluationSchema,
   stringEvaluationSchema,
   integerEvaluationSchema,
@@ -97,7 +92,7 @@ export const evaluationSuccessSchema = union([
   codeDefaultEvaluationSchema,
 ]);
 
-export type OfrepEvaluationSuccess = InferOutput<typeof evaluationSuccessSchema>;
+export type OfrepEvaluationSuccess = z.infer<typeof evaluationSuccessSchema>;
 
 /**
  * `components/schemas/serverEvaluationSuccess` — the 200 body of the single-flag
@@ -107,28 +102,28 @@ export type OfrepEvaluationSuccess = InferOutput<typeof evaluationSuccessSchema>
 export const serverEvaluationSuccessSchema = evaluationSuccessSchema;
 
 /** `components/schemas/evaluationFailure` — a flag that exists but could not be evaluated. */
-export const evaluationFailureSchema = looseObject({
+export const evaluationFailureSchema = z.looseObject({
   key: flagKeySchema,
   errorCode: ofrepEvaluationErrorCodeSchema,
-  errorDetails: optional(errorDetailsSchema),
-  metadata: optional(metadataSchema),
+  errorDetails: z.optional(errorDetailsSchema),
+  metadata: z.optional(metadataSchema),
 });
 
-export type OfrepEvaluationFailure = InferOutput<typeof evaluationFailureSchema>;
+export type OfrepEvaluationFailure = z.infer<typeof evaluationFailureSchema>;
 
 /** `components/schemas/flagNotFound` — the key is unknown to the flag management system. */
-export const flagNotFoundSchema = looseObject({
+export const flagNotFoundSchema = z.looseObject({
   key: flagKeySchema,
-  errorCode: literal(FLAG_NOT_FOUND_ERROR_CODE),
-  errorDetails: optional(errorDetailsSchema),
-  metadata: optional(metadataSchema),
+  errorCode: z.literal(FLAG_NOT_FOUND_ERROR_CODE),
+  errorDetails: z.optional(errorDetailsSchema),
+  metadata: z.optional(metadataSchema),
 });
 
-export type OfrepFlagNotFound = InferOutput<typeof flagNotFoundSchema>;
+export type OfrepFlagNotFound = z.infer<typeof flagNotFoundSchema>;
 
 /** `components/schemas/generalErrorResponse` — the 500 body. Every field is optional. */
-export const generalErrorResponseSchema = looseObject({
-  errorDetails: optional(errorDetailsSchema),
+export const generalErrorResponseSchema = z.looseObject({
+  errorDetails: z.optional(errorDetailsSchema),
 });
 
-export type OfrepGeneralError = InferOutput<typeof generalErrorResponseSchema>;
+export type OfrepGeneralError = z.infer<typeof generalErrorResponseSchema>;

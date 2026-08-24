@@ -3,8 +3,7 @@
  * carrying every flag the caller is entitled to see.
  */
 
-import type { InferOutput } from 'valibot';
-import { array, looseObject, optional, string, union } from 'valibot';
+import * as z from 'zod/mini';
 
 import { errorDetailsSchema, evaluationContextSchema, metadataSchema } from './common.js';
 import {
@@ -15,9 +14,9 @@ import {
 import { eventStreamSchema } from './event-stream.js';
 
 /** `components/schemas/bulkEvaluationRequest`. */
-export const bulkEvaluationRequestSchema = looseObject({ context: evaluationContextSchema });
+export const bulkEvaluationRequestSchema = z.looseObject({ context: evaluationContextSchema });
 
-export type OfrepBulkEvaluationRequest = InferOutput<typeof bulkEvaluationRequestSchema>;
+export type OfrepBulkEvaluationRequest = z.infer<typeof bulkEvaluationRequestSchema>;
 
 /**
  * One entry of the `flags` array: a per-flag success, a per-flag failure, or an
@@ -34,13 +33,13 @@ export type OfrepBulkEvaluationRequest = InferOutput<typeof bulkEvaluationReques
  * the two cannot both be honoured. Accepting the third arm keeps the contract
  * agreeing with the example a server implementer will have copied.
  */
-export const bulkEvaluationEntrySchema = union([
+export const bulkEvaluationEntrySchema = z.union([
   evaluationSuccessSchema,
   evaluationFailureSchema,
   flagNotFoundSchema,
 ]);
 
-export type OfrepBulkEvaluationEntry = InferOutput<typeof bulkEvaluationEntrySchema>;
+export type OfrepBulkEvaluationEntry = z.infer<typeof bulkEvaluationEntrySchema>;
 
 /**
  * `components/schemas/bulkEvaluationSuccess`.
@@ -49,13 +48,13 @@ export type OfrepBulkEvaluationEntry = InferOutput<typeof bulkEvaluationEntrySch
  * while the request as a whole succeeds. Only a request-level failure — an
  * unparseable context, say — gets a 400 and a {@link bulkEvaluationFailureSchema}.
  */
-export const bulkEvaluationSuccessSchema = looseObject({
-  flags: array(bulkEvaluationEntrySchema),
-  metadata: optional(metadataSchema),
-  eventStreams: optional(array(eventStreamSchema)),
+export const bulkEvaluationSuccessSchema = z.looseObject({
+  flags: z.array(bulkEvaluationEntrySchema),
+  metadata: z.optional(metadataSchema),
+  eventStreams: z.optional(z.array(eventStreamSchema)),
 });
 
-export type OfrepBulkEvaluationSuccess = InferOutput<typeof bulkEvaluationSuccessSchema>;
+export type OfrepBulkEvaluationSuccess = z.infer<typeof bulkEvaluationSuccessSchema>;
 
 /**
  * `components/schemas/bulkEvaluationFailure`.
@@ -64,9 +63,9 @@ export type OfrepBulkEvaluationSuccess = InferOutput<typeof bulkEvaluationSucces
  * spec points at the OpenFeature error-code list without enumerating it, so the
  * contract does not close a set the protocol left open.
  */
-export const bulkEvaluationFailureSchema = looseObject({
-  errorCode: string(),
-  errorDetails: optional(errorDetailsSchema),
+export const bulkEvaluationFailureSchema = z.looseObject({
+  errorCode: z.string(),
+  errorDetails: z.optional(errorDetailsSchema),
 });
 
-export type OfrepBulkEvaluationFailure = InferOutput<typeof bulkEvaluationFailureSchema>;
+export type OfrepBulkEvaluationFailure = z.infer<typeof bulkEvaluationFailureSchema>;

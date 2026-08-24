@@ -6,8 +6,8 @@
  */
 
 import { defineApiContract, noBodyResponse } from '@toad-contracts/core';
-import { withObjectKeys } from '@toad-contracts/valibot';
-import { minLength, object, pipe, string } from 'valibot';
+import { withObjectKeys } from '@toad-contracts/zod';
+import * as z from 'zod/mini';
 
 import {
   bulkEvaluationFailureSchema,
@@ -53,7 +53,7 @@ const RATE_LIMITED = noBodyResponse({
  * the bulk one.
  */
 export const evaluateFlagPathParamsSchema = withObjectKeys(
-  object({ key: pipe(string(), minLength(1)) }),
+  z.object({ key: z.string().check(z.minLength(1)) }),
 );
 
 /**

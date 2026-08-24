@@ -1,6 +1,6 @@
 import type { InferSchemaOutput } from '@toad-contracts/core';
-import { safeParse } from 'valibot';
 import { describe, expectTypeOf, it } from 'vitest';
+import * as z from 'zod/mini';
 
 import type {
   OfrepBulkEvaluationSuccess,
@@ -28,10 +28,10 @@ describe('inferred types', () => {
     // response could be. Lose that — by widening the contract's type, or by
     // reaching for a status the contract does not declare — and every parse
     // through the contract starts yielding `unknown`.
-    const parsed = safeParse(evaluateFlagContract.responsesByStatusCode[200], {});
+    const parsed = z.safeParse(evaluateFlagContract.responsesByStatusCode[200], {});
 
     if (parsed.success) {
-      expectTypeOf(parsed.output).toEqualTypeOf<OfrepEvaluationSuccess>();
+      expectTypeOf(parsed.data).toEqualTypeOf<OfrepEvaluationSuccess>();
     }
   });
 

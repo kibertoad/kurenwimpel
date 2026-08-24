@@ -7,21 +7,7 @@
  * tells the provider to keep polling; the stream is the opt-in fast path.
  */
 
-import type { InferOutput } from 'valibot';
-import {
-  integer,
-  isoTimestamp,
-  looseObject,
-  minValue,
-  never,
-  number,
-  optional,
-  pipe,
-  startsWith,
-  string,
-  union,
-  url,
-} from 'valibot';
+import * as z from 'zod/mini';
 
 /** The only `eventStream.type` the protocol currently defines. */
 export const SSE_EVENT_STREAM_TYPE = 'sse';
@@ -32,7 +18,7 @@ export const REFETCH_EVALUATION_EVENT_TYPE = 'refetchEvaluation';
 /** Fallback for `inactivityDelaySec` when a stream entry omits it. */
 export const DEFAULT_INACTIVITY_DELAY_SECONDS = 120;
 
-const inactivityDelaySchema = pipe(number(), integer(), minValue(1));
+const inactivityDelaySchema = z.int().check(z.minimum(1));
 
 /**
  * `components/schemas/eventStreamEndpoint` — the split form, for deployments
@@ -40,30 +26,30 @@ const inactivityDelaySchema = pipe(number(), integer(), minValue(1));
  * is `origin + requestUri`, falling back to the configured OFREP base URL's
  * origin when `origin` is absent.
  */
-export const eventStreamEndpointSchema = looseObject({
-  origin: optional(pipe(string(), url())),
-  requestUri: pipe(string(), startsWith('/')),
+export const eventStreamEndpointSchema = z.looseObject({
+  origin: z.optional(z.url()),
+  requestUri: z.string().check(z.startsWith('/')),
 });
 
-export type OfrepEventStreamEndpoint = InferOutput<typeof eventStreamEndpointSchema>;
+export type OfrepEventStreamEndpoint = z.infer<typeof eventStreamEndpointSchema>;
 
 /**
  * The `url` arm of `eventStream`. Treat the value as a credential: it may embed
  * tokens or channel identifiers, and the spec forbids logging or persisting it.
  */
-export const urlEventStreamSchema = looseObject({
-  type: string(),
-  url: pipe(string(), url()),
-  endpoint: optional(never()),
-  inactivityDelaySec: optional(inactivityDelaySchema),
+export const urlEventStreamSchema = z.looseObject({
+  type: z.string(),
+  url: z.url(),
+  endpoint: z.optional(z.never()),
+  inactivityDelaySec: z.optional(inactivityDelaySchema),
 });
 
 /** The `endpoint` arm of `eventStream`. */
-export const endpointEventStreamSchema = looseObject({
-  type: string(),
+export const endpointEventStreamSchema = z.looseObject({
+  type: z.string(),
   endpoint: eventStreamEndpointSchema,
-  url: optional(never()),
-  inactivityDelaySec: optional(inactivityDelaySchema),
+  url: z.optional(z.never()),
+  inactivityDelaySec: z.optional(inactivityDelaySchema),
 });
 
 /**
@@ -73,48 +59,48 @@ export const endpointEventStreamSchema = looseObject({
  * does not carry a field declares it `optional(never())` so that supplying both
  * fails instead of quietly matching the first arm.
  *
- * `type` stays an open `string`, not a picklist of `'sse'`: providers are
- * required to *ignore* entries whose type they do not know, which they can only
- * do if parsing kept them.
+ * `type` stays an open `string`, not an enum of `'sse'`: providers are required
+ * to *ignore* entries whose type they do not know, which they can only do if
+ * parsing kept them.
  */
-export const eventStreamSchema = union([urlEventStreamSchema, endpointEventStreamSchema]);
+export const eventStreamSchema = z.union([urlEventStreamSchema, endpointEventStreamSchema]);
 
-export type OfrepEventStream = InferOutput<typeof eventStreamSchema>;
+export type OfrepEventStream = z.infer<typeof eventStreamSchema>;
 
 /**
  * A flag-configuration timestamp: Unix seconds (recommended) or an ISO 8601
- * date-time. Shared by `sseEventData.lastModified` and the `flagConfigLastModified`
- * query parameter it feeds.
+ * date-time. Shared by `sseEventData.lastModified` and the
+ * `flagConfigLastModified` query parameter it feeds.
  */
-export const flagConfigLastModifiedSchema = union([
-  pipe(number(), integer(), minValue(0)),
-  pipe(string(), isoTimestamp()),
+export const flagConfigLastModifiedSchema = z.union([
+  z.int().check(z.minimum(0)),
+  z.iso.datetime(),
 ]);
 
-export type FlagConfigLastModified = InferOutput<typeof flagConfigLastModifiedSchema>;
+export type FlagConfigLastModified = z.infer<typeof flagConfigLastModifiedSchema>;
 
 /**
  * `components/schemas/sseEventData` — the JSON payload inside an event's `data`
  * string. Providers route on this `type`, never on the SSE `event` field.
  */
-export const sseEventDataSchema = looseObject({
-  type: string(),
-  etag: optional(string()),
-  lastModified: optional(flagConfigLastModifiedSchema),
+export const sseEventDataSchema = z.looseObject({
+  type: z.string(),
+  etag: z.optional(z.string()),
+  lastModified: z.optional(flagConfigLastModifiedSchema),
 });
 
-export type OfrepSseEventData = InferOutput<typeof sseEventDataSchema>;
+export type OfrepSseEventData = z.infer<typeof sseEventDataSchema>;
 
 /**
  * `components/schemas/sseEvent` — one event off the stream. `data` is a JSON
  * *string*, so validating it means parsing `data` and running the result through
  * {@link sseEventDataSchema}; the two are deliberately separate schemas.
  */
-export const sseEventSchema = looseObject({
-  data: string(),
-  event: optional(string()),
-  id: optional(string()),
-  retry: optional(pipe(number(), integer(), minValue(0))),
+export const sseEventSchema = z.looseObject({
+  data: z.string(),
+  event: z.optional(z.string()),
+  id: z.optional(z.string()),
+  retry: z.optional(z.int().check(z.minimum(0))),
 });
 
-export type OfrepSseEvent = InferOutput<typeof sseEventSchema>;
+export type OfrepSseEvent = z.infer<typeof sseEventSchema>;

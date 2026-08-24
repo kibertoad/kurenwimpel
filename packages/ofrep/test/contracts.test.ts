@@ -1,6 +1,6 @@
 import { describeApiContract, isNoBodyResponse, resolveStatusEntry } from '@toad-contracts/core';
-import { safeParse } from 'valibot';
 import { describe, expect, it } from 'vitest';
+import * as z from 'zod/mini';
 
 import {
   bulkEvaluationQuerySchema,
@@ -48,8 +48,8 @@ describe('route paths', () => {
   });
 
   it('rejects an empty key, which would address the bulk route instead', () => {
-    expect(safeParse(evaluateFlagPathParamsSchema, { key: '' }).success).toBe(false);
-    expect(safeParse(evaluateFlagPathParamsSchema, { key: 'k' }).success).toBe(true);
+    expect(z.safeParse(evaluateFlagPathParamsSchema, { key: '' }).success).toBe(false);
+    expect(z.safeParse(evaluateFlagPathParamsSchema, { key: 'k' }).success).toBe(true);
   });
 });
 
@@ -93,44 +93,44 @@ describe('status codes', () => {
  */
 describe('response bodies are not interchangeable', () => {
   it('will not read a not-found body as a successful evaluation', () => {
-    expect(safeParse(singleFlagResponses[200], FLAG_NOT_FOUND).success).toBe(false);
+    expect(z.safeParse(singleFlagResponses[200], FLAG_NOT_FOUND).success).toBe(false);
   });
 
   it('will not read a successful evaluation as a not-found body', () => {
-    expect(safeParse(singleFlagResponses[404], SINGLE_EVALUATION_SUCCESS).success).toBe(false);
+    expect(z.safeParse(singleFlagResponses[404], SINGLE_EVALUATION_SUCCESS).success).toBe(false);
   });
 
   it('will not read a single-flag body as a bulk one', () => {
-    expect(safeParse(bulkResponses[200], SINGLE_EVALUATION_SUCCESS).success).toBe(false);
+    expect(z.safeParse(bulkResponses[200], SINGLE_EVALUATION_SUCCESS).success).toBe(false);
   });
 
   it('will not read a bulk body as a single-flag one', () => {
-    expect(safeParse(singleFlagResponses[200], BULK_EVALUATION_SUCCESS).success).toBe(false);
+    expect(z.safeParse(singleFlagResponses[200], BULK_EVALUATION_SUCCESS).success).toBe(false);
   });
 
   it('accepts each route its own body, so the exclusions above are not vacuous', () => {
-    expect(safeParse(singleFlagResponses[200], SINGLE_EVALUATION_SUCCESS).success).toBe(true);
-    expect(safeParse(singleFlagResponses[404], FLAG_NOT_FOUND).success).toBe(true);
-    expect(safeParse(bulkResponses[200], BULK_EVALUATION_SUCCESS).success).toBe(true);
+    expect(z.safeParse(singleFlagResponses[200], SINGLE_EVALUATION_SUCCESS).success).toBe(true);
+    expect(z.safeParse(singleFlagResponses[404], FLAG_NOT_FOUND).success).toBe(true);
+    expect(z.safeParse(bulkResponses[200], BULK_EVALUATION_SUCCESS).success).toBe(true);
     expect(
-      safeParse(evaluateFlagContract.requestBodySchema, SINGLE_EVALUATION_REQUEST).success,
+      z.safeParse(evaluateFlagContract.requestBodySchema, SINGLE_EVALUATION_REQUEST).success,
     ).toBe(true);
   });
 });
 
 describe('headers and query parameters', () => {
   it('keeps headers it does not declare, so a proxy header is not a failure', () => {
-    const result = safeParse(ofrepAuthHeadersSchema, {
+    const result = z.safeParse(ofrepAuthHeadersSchema, {
       authorization: 'Bearer t',
       'x-request-id': 'r1',
     });
 
-    expect(result.output).toEqual({ authorization: 'Bearer t', 'x-request-id': 'r1' });
+    expect(result.data).toEqual({ authorization: 'Bearer t', 'x-request-id': 'r1' });
   });
 
   it('types retry-after as a string, because HTTP never sends it as a number', () => {
-    expect(safeParse(ofrepResponseHeadersSchema, { 'retry-after': '120' }).success).toBe(true);
-    expect(safeParse(ofrepResponseHeadersSchema, { 'retry-after': 120 }).success).toBe(false);
+    expect(z.safeParse(ofrepResponseHeadersSchema, { 'retry-after': '120' }).success).toBe(true);
+    expect(z.safeParse(ofrepResponseHeadersSchema, { 'retry-after': 120 }).success).toBe(false);
   });
 
   it('rejects a query timestamp in the form a query string would actually carry it', () => {
@@ -139,10 +139,10 @@ describe('headers and query parameters', () => {
     // so a server reading `"1771622898"` has to coerce before validating. This
     // is the footgun, pinned so it stays documented rather than discovered.
     expect(
-      safeParse(bulkEvaluationQuerySchema, { flagConfigLastModified: 1_771_622_898 }).success,
+      z.safeParse(bulkEvaluationQuerySchema, { flagConfigLastModified: 1_771_622_898 }).success,
     ).toBe(true);
     expect(
-      safeParse(bulkEvaluationQuerySchema, { flagConfigLastModified: '1771622898' }).success,
+      z.safeParse(bulkEvaluationQuerySchema, { flagConfigLastModified: '1771622898' }).success,
     ).toBe(false);
   });
 });

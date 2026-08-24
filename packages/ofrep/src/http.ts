@@ -9,8 +9,7 @@
  * can be demanded of an arbitrary implementation.
  */
 
-import type { InferOutput } from 'valibot';
-import { looseObject, optional, string } from 'valibot';
+import * as z from 'zod/mini';
 
 import { flagConfigLastModifiedSchema } from './event-stream.js';
 
@@ -18,21 +17,21 @@ import { flagConfigLastModifiedSchema } from './event-stream.js';
  * The two authentication schemes from `components/securitySchemes`, as request
  * headers: `Authorization: Bearer <token>` and `X-API-Key: <key>`.
  */
-export const ofrepAuthHeadersSchema = looseObject({
-  authorization: optional(string()),
-  'x-api-key': optional(string()),
+export const ofrepAuthHeadersSchema = z.looseObject({
+  authorization: z.optional(z.string()),
+  'x-api-key': z.optional(z.string()),
 });
 
-export type OfrepAuthHeaders = InferOutput<typeof ofrepAuthHeadersSchema>;
+export type OfrepAuthHeaders = z.infer<typeof ofrepAuthHeadersSchema>;
 
 /** Auth plus the `If-None-Match` conditional the bulk route answers with a 304. */
-export const bulkEvaluationRequestHeadersSchema = looseObject({
-  authorization: optional(string()),
-  'x-api-key': optional(string()),
-  'if-none-match': optional(string()),
+export const bulkEvaluationRequestHeadersSchema = z.looseObject({
+  authorization: z.optional(z.string()),
+  'x-api-key': z.optional(z.string()),
+  'if-none-match': z.optional(z.string()),
 });
 
-export type OfrepBulkRequestHeaders = InferOutput<typeof bulkEvaluationRequestHeadersSchema>;
+export type OfrepBulkRequestHeaders = z.infer<typeof bulkEvaluationRequestHeadersSchema>;
 
 /**
  * `flagConfigEtag` and `flagConfigLastModified` — cache-validation metadata
@@ -44,12 +43,12 @@ export type OfrepBulkRequestHeaders = InferOutput<typeof bulkEvaluationRequestHe
  * ISO 8601 string. A query string carries neither: a server reads `"1771622898"`
  * and has to coerce before validating.
  */
-export const bulkEvaluationQuerySchema = looseObject({
-  flagConfigEtag: optional(string()),
-  flagConfigLastModified: optional(flagConfigLastModifiedSchema),
+export const bulkEvaluationQuerySchema = z.looseObject({
+  flagConfigEtag: z.optional(z.string()),
+  flagConfigLastModified: z.optional(flagConfigLastModifiedSchema),
 });
 
-export type OfrepBulkQuery = InferOutput<typeof bulkEvaluationQuerySchema>;
+export type OfrepBulkQuery = z.infer<typeof bulkEvaluationQuerySchema>;
 
 /**
  * Response headers either route may set.
@@ -61,9 +60,9 @@ export type OfrepBulkQuery = InferOutput<typeof bulkEvaluationQuerySchema>;
  * `retry-after` is a string because HTTP says so: it is either a delay in seconds
  * or an HTTP-date, never a JSON number.
  */
-export const ofrepResponseHeadersSchema = looseObject({
-  etag: optional(string()),
-  'retry-after': optional(string()),
+export const ofrepResponseHeadersSchema = z.looseObject({
+  etag: z.optional(z.string()),
+  'retry-after': z.optional(z.string()),
 });
 
-export type OfrepResponseHeaders = InferOutput<typeof ofrepResponseHeadersSchema>;
+export type OfrepResponseHeaders = z.infer<typeof ofrepResponseHeadersSchema>;

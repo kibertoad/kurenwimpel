@@ -211,7 +211,7 @@ for the smallest complete example.
 Protocol](https://openfeature.dev/docs/reference/other-technologies/ofrep/) written
 out as a [toad-contracts](https://github.com/kibertoad/toad-contracts) API contract:
 two routes, every request and response body, and the change-notification stream,
-as valibot schemas checked against the specification's own examples.
+as Zod Mini schemas checked against the specification's own examples.
 
 OFREP is the HTTP layer between an OpenFeature provider and a flag management
 system. Serving it means every community-maintained OFREP provider — in any
