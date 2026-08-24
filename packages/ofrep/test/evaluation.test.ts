@@ -100,18 +100,19 @@ describe('evaluation success', () => {
     ).toBe(false);
   });
 
-  it('requires a reason', () => {
+  it('requires a reason, which is what tells a bulk entry apart from a failure', () => {
     expect(safeParse(evaluationSuccessSchema, { key: 'k', value: true }).success).toBe(false);
   });
 });
 
 describe('metadata', () => {
-  it('accepts JSON primitives', () => {
-    const result = safeParse(metadataSchema, { team: 'ecommerce', tier: 2, beta: true });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects nested objects and arrays', () => {
+  it('is flat: JSON primitives only, and never an array', () => {
+    // The array case is the one that needs asserting. `record` accepts one and
+    // rewrites it to `{ "0": 'ecommerce' }`, so without the guard this parses
+    // and the caller gets metadata it never sent.
+    expect(safeParse(metadataSchema, { team: 'ecommerce', tier: 2, beta: true }).success).toBe(
+      true,
+    );
     expect(safeParse(metadataSchema, { owner: { team: 'x' } }).success).toBe(false);
     expect(safeParse(metadataSchema, ['ecommerce']).success).toBe(false);
   });
@@ -137,7 +138,7 @@ describe('failure bodies', () => {
     expect(safeParse(flagNotFoundSchema, SINGLE_EVALUATION_FAILURE).success).toBe(false);
   });
 
-  it('rejects a failure without an error code', () => {
+  it('requires an error code, the other half of bulk entry discrimination', () => {
     expect(safeParse(evaluationFailureSchema, { key: 'k' }).success).toBe(false);
   });
 });
