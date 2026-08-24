@@ -208,7 +208,28 @@ describe('prerequisite graph cost', () => {
     const result = evaluateFlag(flags.get('f0')!, {}, { flags });
 
     expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
-    expect(result.errorMessage).toContain('prerequisites deep');
+    // Reported against the flag that was asked for, naming the one the walk
+    // gave up at.
+    expect(result.errorMessage).toContain('Flag "f0" has a prerequisite chain more than 50 deep');
+    expect(result.errorMessage).toContain('"f50"');
+  });
+
+  it('keeps one root\u2019s depth failure out of another root\u2019s answer', () => {
+    // Depth is a property of the walk, not of the flag it stops at: f30 is
+    // thirty prerequisites below f0 and the root of a chain of thirty of its
+    // own. Memoising the depth error under the key it was raised at would let
+    // whichever flag a bulk response happened to visit first decide whether
+    // the others were reported broken.
+    const flags = new Map(chain(60, 1).map((definition) => [definition.key, definition]));
+    const solo = evaluateFlag(flags.get('f30')!, {}, { flags });
+
+    const memo = createSharedMemo();
+    expect(evaluateFlag(flags.get('f0')!, {}, { flags }, memo).errorCode).toBe(
+      'INVALID_DEFINITION',
+    );
+
+    expect(evaluateFlag(flags.get('f30')!, {}, { flags }, memo)).toEqual(solo);
+    expect(solo.reason).toBe('STATIC');
   });
 });
 

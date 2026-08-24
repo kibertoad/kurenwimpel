@@ -23,6 +23,27 @@ describe('traffic allocation', () => {
     ],
   };
 
+  it('settles a gate whose percentage rounds to no buckets, without asking for a key', () => {
+    // percent has 0.01 granularity, so 0.001 rounds down to a threshold of
+    // zero buckets and the gate admits nobody. Settling it against 0 alone let
+    // an operator who typed 0.001 for 0 turn every anonymous and service
+    // context into a reported TARGETING_KEY_MISSING, on a gate that was closed
+    // either way.
+    const parked: FlagDefinition<boolean> = { ...booleanFlag, allocation: { percent: 0.001 } };
+
+    expect(evaluateFlag(parked, {})).toMatchObject({ variant: 'off', reason: 'NOT_ALLOCATED' });
+    expect(evaluateFlag(parked, { targetingKey: 'user-1' })).toMatchObject({
+      variant: 'off',
+      reason: 'NOT_ALLOCATED',
+    });
+  });
+
+  it('settles the other end the same way: a percentage that rounds to every bucket', () => {
+    const finished: FlagDefinition<boolean> = { ...booleanFlag, allocation: { percent: 99.9999 } };
+
+    expect(evaluateFlag(finished, {})).toMatchObject({ variant: 'off', reason: 'STATIC' });
+  });
+
   it('admits everyone at 100 percent without asking for a targeting key', () => {
     const finished: FlagDefinition<boolean> = {
       ...booleanFlag,

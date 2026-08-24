@@ -40,6 +40,11 @@ describe('parseSegmentDefinition', () => {
     ['a non-object', 7],
     ['a missing key', { included: ['a'] }],
     ['an empty segment', { key: 's' }],
+    // Presence is not content: two empty sets and no rules match nobody,
+    // forever, so every inSegment naming it matches nobody and every
+    // notInSegment matches everybody — with nothing to explain why.
+    ['a segment whose only list is empty', { key: 's', included: [] }],
+    ['a segment whose lists and rules are all empty', { key: 's', excluded: [], rules: [] }],
     ['a non-string key list', { key: 's', included: [1] }],
     ['a rule without conditions', { key: 's', rules: [{ id: 'r', conditions: [] }] }],
   ])('rejects %s', (_label, input) => {
@@ -280,6 +285,23 @@ describe('unrecognised keys in a ruleset document', () => {
       segments: [validSegment],
       version: 'rev-42',
       updatedAt: 1_700_000_000,
+    });
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('stays quiet about a nested envelope that could never have held definitions', () => {
+    // A control plane shipping metadata, links, or pagination alongside its
+    // definitions would otherwise draw an issue on every refresh — every
+    // thirty seconds on the default poll — with nothing the operator could do
+    // about it short of flattening the document.
+    const result = parseRuleset({
+      flags: [validFlag],
+      segments: [validSegment],
+      metadata: { env: 'prod', owner: 'growth' },
+      links: { next: '/rulesets?page=2' },
+      pagination: { total: 2, cursor: 'abc' },
     });
 
     expect(result.flags).toHaveLength(1);

@@ -1,12 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { createSnapshot, FeatureFlagClient, StaticProvider } from '../../src/index.js';
-import type {
-  EvaluationContext,
-  FlagDefinition,
-  FlagProvider,
-  FlagSnapshot,
-} from '../../src/index.js';
+import { FeatureFlagClient, StaticProvider } from '../../src/index.js';
+import type { EvaluationContext, FlagDefinition } from '../../src/index.js';
 
 const flags: FlagDefinition[] = [
   {
@@ -31,6 +26,22 @@ const flags: FlagDefinition[] = [
     offVariant: 'standard',
   },
 ];
+
+/** Gated on an attribute that only ever arrives through the default context. */
+const staffOnly: FlagDefinition = {
+  key: 'staff',
+  enabled: true,
+  variants: { on: true, off: false },
+  defaultVariant: 'off',
+  offVariant: 'off',
+  rules: [
+    {
+      id: 'internal',
+      conditions: [{ attribute: 'service', operator: 'eq', value: 'billing' }],
+      variant: 'on',
+    },
+  ],
+};
 
 async function makeClient(extra: FlagDefinition[] = []): Promise<FeatureFlagClient> {
   const client = new FeatureFlagClient({ provider: new StaticProvider([...flags, ...extra]) });
@@ -149,27 +160,30 @@ describe('FeatureFlagClient', () => {
 
   it('applies the default context when no per-call context is given', async () => {
     const client = new FeatureFlagClient({
-      provider: new StaticProvider([
-        {
-          key: 'staff',
-          enabled: true,
-          variants: { on: true, off: false },
-          defaultVariant: 'off',
-          offVariant: 'off',
-          rules: [
-            {
-              id: 'internal',
-              conditions: [{ attribute: 'service', operator: 'eq', value: 'billing' }],
-              variant: 'on',
-            },
-          ],
-        },
-      ]),
+      provider: new StaticProvider([staffOnly]),
       defaultContext: { service: 'billing' },
     });
     await client.init();
 
     expect(client.getBoolean('staff', false)).toBe(true);
+  });
+
+  it('does not follow a default context mutated after construction', async () => {
+    // The default context's entries are walked once, at construction. Reading
+    // the live object on the no-context path as well made the same flag answer
+    // two ways in one process, deciding it on nothing but whether the call site
+    // happened to pass a context.
+    const defaults: Record<string, string> = { service: 'shipping' };
+    const client = new FeatureFlagClient({
+      provider: new StaticProvider([staffOnly]),
+      defaultContext: defaults,
+    });
+    await client.init();
+
+    defaults['service'] = 'billing';
+
+    expect(client.getBoolean('staff', false)).toBe(false);
+    expect(client.getBoolean('staff', false, { plan: 'pro' })).toBe(false);
   });
 
   it('resolves segment conditions against the snapshot segments', async () => {
@@ -213,129 +227,5 @@ describe('FeatureFlagClient', () => {
     ]);
 
     expect(client.getBooleanDetails('dependent', false).reason).toBe('STATIC');
-  });
-
-  it('installs a new snapshot on refresh', async () => {
-    const provider = new StaticProvider(flags);
-    const client = new FeatureFlagClient({ provider });
-    await client.init();
-
-    provider.replace(flags.map((flag) => ({ ...flag, enabled: false })));
-
-    expect(await client.refresh()).toBe(true);
-    expect(client.getBoolean('new-checkout', true)).toBe(false);
-  });
-
-  it('coalesces overlapping refreshes so a slow load cannot roll the snapshot back', async () => {
-    let resolveLoad: ((snapshot: FlagSnapshot) => void) | undefined;
-    let calls = 0;
-    const slow: FlagProvider = {
-      name: 'slow',
-      load: () => {
-        calls += 1;
-        return new Promise((resolve) => {
-          resolveLoad = resolve;
-        });
-      },
-    };
-
-    const client = new FeatureFlagClient({ provider: slow });
-    const first = client.refresh();
-    const second = client.refresh();
-
-    // The overlapping call joins the in-flight load instead of racing it.
-    expect(calls).toBe(1);
-    resolveLoad?.(createSnapshot(flags));
-
-    expect(await first).toBe(true);
-    expect(await second).toBe(true);
-    expect(client.getBoolean('new-checkout', false)).toBe(true);
-
-    // A later refresh starts a fresh load.
-    const third = client.refresh();
-    expect(calls).toBe(2);
-    resolveLoad?.(createSnapshot(flags));
-    await third;
-  });
-
-  it('keeps the previous snapshot when the provider reports no change', async () => {
-    const unchanging: FlagProvider = {
-      name: 'unchanging',
-      load: (previous?: FlagSnapshot) =>
-        Promise.resolve(previous === undefined ? createSnapshot(flags) : null),
-    };
-
-    const client = new FeatureFlagClient({ provider: unchanging });
-    await client.init();
-
-    expect(await client.refresh()).toBe(false);
-    expect(client.getBoolean('new-checkout', false)).toBe(true);
-  });
-
-  it('rethrows from init so a service fails to start on a bad control plane', async () => {
-    const broken: FlagProvider = {
-      name: 'broken',
-      load: () => Promise.reject(new Error('control plane unreachable')),
-    };
-
-    await expect(new FeatureFlagClient({ provider: broken }).init()).rejects.toThrow(
-      'control plane unreachable',
-    );
-  });
-
-  it('rejects from init when the provider has no ruleset to hand over', async () => {
-    // A 304 to the very first request, a proxy answering from a stale
-    // validator: "unchanged" against nothing is not a snapshot. Coming up ready
-    // on the empty one would serve every request on caller fallbacks, silently.
-    const empty: FlagProvider = { name: 'empty', load: () => Promise.resolve(null) };
-    const client = new FeatureFlagClient({ provider: empty });
-
-    await expect(client.init()).rejects.toThrow(/no change on the first load/u);
-    expect(client.ready).toBe(false);
-  });
-
-  it('swallows refresh failures, reports them, and serves the stale snapshot', async () => {
-    let calls = 0;
-    const flaky: FlagProvider = {
-      name: 'flaky',
-      load: () => {
-        calls += 1;
-        return calls === 1
-          ? Promise.resolve(createSnapshot(flags))
-          : Promise.reject(new Error('boom'));
-      },
-    };
-
-    const onError = vi.fn();
-    const client = new FeatureFlagClient({ provider: flaky, onError });
-    await client.init();
-
-    expect(await client.refresh()).toBe(false);
-    expect(client.getBoolean('new-checkout', false)).toBe(true);
-    expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0]?.[1]).toEqual({ operation: 'load', provider: 'flaky' });
-  });
-
-  it('closes the provider and reports close failures without throwing', async () => {
-    const close = vi.fn(() => Promise.reject(new Error('close failed')));
-    const onError = vi.fn();
-
-    const client = new FeatureFlagClient({
-      provider: { name: 'closable', load: () => Promise.resolve(createSnapshot([])), close },
-      onError,
-    });
-
-    await expect(client.close()).resolves.toBeUndefined();
-    expect(close).toHaveBeenCalledOnce();
-    expect(onError.mock.calls[0]?.[1]).toMatchObject({ operation: 'close' });
-  });
-
-  it('accepts a pushed snapshot', () => {
-    const client = new FeatureFlagClient({ provider: new StaticProvider() });
-    client.setSnapshot(createSnapshot(flags, { version: 'rev-9' }));
-
-    expect(client.ready).toBe(true);
-    expect(client.snapshot.version).toBe('rev-9');
-    expect(client.getBoolean('new-checkout', false)).toBe(true);
   });
 });

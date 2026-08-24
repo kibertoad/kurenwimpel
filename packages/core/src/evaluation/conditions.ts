@@ -39,8 +39,26 @@ export function readAttribute(
 }
 
 /**
+ * The one rule for reading an identity off an attribute: a non-empty string,
+ * or a finite number spelled as one.
+ *
+ * Numbers are accepted because handing over `targetingKey: user.id` from a
+ * numeric id column is the ordinary case, and a context takes any JSON. What
+ * matters is that every consumer applies the *same* rule. Bucketing used to
+ * coerce numbers while individual targets and a segment's included and
+ * excluded lists rejected them, so a numeric key was split normally, matched
+ * no target that named it, and walked straight past the exclusion list that
+ * named it too — the one guarantee segments make unconditionally.
+ */
+export function identityOf(raw: AttributeValue | undefined): string | undefined {
+  if (typeof raw === 'string') return raw.length > 0 ? raw : undefined;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  return undefined;
+}
+
+/**
  * The identity a context carries, under the same own-property rule as every
- * other attribute, and the same non-empty-string rule everywhere it is used.
+ * other attribute, and the same {@link identityOf} rule everywhere it is used.
  *
  * Reading `context.targetingKey` directly instead would make the one attribute
  * that decides bucketing and individual targeting the one attribute read off
@@ -48,8 +66,7 @@ export function readAttribute(
  * on it while `targetingKey exists` answered false for the same subject.
  */
 export function readTargetingKey(context: EvaluationContext): string | undefined {
-  const raw = readAttribute(context, 'targetingKey');
-  return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+  return identityOf(readAttribute(context, 'targetingKey'));
 }
 
 /**

@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { compileSegment, isInSegment, matchesCondition } from '../../src/index.js';
-import type { AttributeValue, Condition, SegmentMap } from '../../src/index.js';
+import type { AttributeValue, Condition, EvaluationContext, SegmentMap } from '../../src/index.js';
 
 const check = (condition: Condition, context: Record<string, AttributeValue>): boolean =>
   matchesCondition(condition, context);
+
+/** A context whose targeting key arrived as a number, as the wire allows. */
+const numericKey = (id: number): EvaluationContext =>
+  ({ targetingKey: id, plan: 'pro' }) as unknown as EvaluationContext;
 
 describe('matchesCondition', () => {
   it('compares numbers without coercion', () => {
@@ -258,5 +262,19 @@ describe('the targeting key is read like every other attribute', () => {
   it('still resolves an own targeting key', () => {
     const segment = compileSegment({ key: 'beta', included: ['u-1'] });
     expect(isInSegment(segment, { targetingKey: 'u-1' })).toBe(true);
+  });
+
+  it('reads a numerically-spelled key, so an exclusion still binds', () => {
+    // A number bucketed like a string but matched no list, so a subject named
+    // in `excluded` was granted membership by the rules regardless — past the
+    // one guarantee a segment makes unconditionally.
+    const segment = compileSegment({
+      key: 'beta',
+      excluded: ['12345'],
+      rules: [{ id: 'pro', conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }] }],
+    });
+
+    expect(isInSegment(segment, numericKey(12_345))).toBe(false);
+    expect(isInSegment(segment, numericKey(999))).toBe(true);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { FeatureFlagClient, StaticProvider } from '../../src/index.js';
-import type { FlagDefinition, ImpressionEvent } from '../../src/index.js';
+import type { EvaluationContext, FlagDefinition, ImpressionEvent } from '../../src/index.js';
 
 const experiment: FlagDefinition = {
   key: 'checkout-experiment',
@@ -147,5 +147,37 @@ describe('evaluateAll', () => {
       'checkout-experiment',
       'plain-toggle',
     ]);
+  });
+});
+
+describe('the targeting key an impression reports', () => {
+  const emit = async (context: unknown): Promise<ImpressionEvent> => {
+    const seen: ImpressionEvent[] = [];
+    const client = await makeClient((event) => seen.push(event));
+    client.getBoolean('plain-toggle', false, context as EvaluationContext);
+    return seen[0]!;
+  };
+
+  it('is the key targeting actually used, not whatever the caller passed', async () => {
+    // Reported straight off the context, the feed carried a number in a field
+    // typed string — breaking any downstream join on subject id — while every
+    // other consumer had bucketed and matched on the string spelling of it.
+    expect(await emit({ targetingKey: 12_345 })).toMatchObject({ targetingKey: '12345' });
+  });
+
+  it('claims no identity for a subject that was never bucketed', async () => {
+    // An empty string is no identity anywhere in evaluation. An impression
+    // carrying one alongside TARGETING_KEY_MISSING counts an exposure for a
+    // subject that had none.
+    const event = await emit({ targetingKey: '' });
+
+    expect(event.targetingKey).toBeUndefined();
+    expect(Object.hasOwn(event, 'targetingKey')).toBe(false);
+  });
+
+  it('ignores an inherited targeting key, exactly as targeting does', async () => {
+    expect(await emit(Object.create({ targetingKey: 'inherited' }))).not.toHaveProperty(
+      'targetingKey',
+    );
   });
 });

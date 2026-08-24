@@ -85,4 +85,55 @@ describe('a parsed definition does not alias the payload it came from', () => {
     expect(parsed.variants['on']).toEqual({ limit: 1 });
     expect(parsed.metadata?.['owner']).toBe('web');
   });
+
+  it('copies every string list it keeps, not just the values', () => {
+    // Target keys, prerequisite variant lists, and an `in` condition's values
+    // were handed back by reference, so a push into the decoded payload
+    // changed who an already-snapshotted rule matched.
+    const raw = {
+      ...valid,
+      targets: [{ variant: 'on', keys: ['qa-1'] }],
+      prerequisites: [{ flag: 'gate', variants: ['on'] }],
+      rules: [
+        {
+          id: 'plan',
+          conditions: [{ attribute: 'plan', operator: 'in', value: ['pro'] }],
+          variant: 'on',
+        },
+      ],
+    };
+    const parsed = parseFlagDefinition(raw);
+
+    raw.targets[0]?.keys.push('anyone');
+    raw.prerequisites[0]?.variants.push('off');
+    raw.rules[0]?.conditions[0]?.value.push('free');
+
+    expect(parsed.targets?.[0]?.keys).toEqual(['qa-1']);
+    expect(parsed.prerequisites?.[0]?.variants).toEqual(['on']);
+    expect(parsed.rules?.[0]?.conditions[0]).toEqual({
+      attribute: 'plan',
+      operator: 'in',
+      value: ['pro'],
+    });
+  });
+
+  it('freezes what travels back out on every result', () => {
+    // Variant values and metadata leave the snapshot by reference on the hot
+    // path, where a copy per evaluation would be a real cost. Frozen, the
+    // reference is safe to hand over: writing to a value a caller was served
+    // no longer rewrites the flag for every evaluation after it.
+    const parsed = parseFlagDefinition({
+      ...valid,
+      variants: { on: { limits: { perMinute: 600 } }, off: false },
+      metadata: { owner: 'web' },
+    });
+    const served = parsed.variants['on'] as { limits: { perMinute: number } };
+
+    expect(Object.isFrozen(served)).toBe(true);
+    expect(Object.isFrozen(served.limits)).toBe(true);
+    expect(Object.isFrozen(parsed.metadata)).toBe(true);
+    expect(() => {
+      served.limits.perMinute = 1;
+    }).toThrow(TypeError);
+  });
 });

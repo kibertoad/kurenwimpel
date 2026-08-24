@@ -134,23 +134,40 @@ export function drawAllocation(
   const domain =
     allocation.seed === undefined ? ['allocation', salt] : ['allocation', salt, allocation.seed];
 
-  // percent has 0.01 granularity, so the threshold is an exact bucket count;
-  // rounding keeps float drift from admitting one extra bucket (0.07 / 100 *
-  // 10 000 is 7.000000000000001).
-  return bucketOf(domain, bucketingKey) < Math.round((allocation.percent / 100) * BUCKET_COUNT);
+  return bucketOf(domain, bucketingKey) < admittedBuckets(allocation.percent);
 }
 
 /**
- * The gate's verdict when the percentage alone settles it: everyone in at 100,
- * everyone out at 0. `undefined` means the gate has to draw a bucket — and only
- * then does it need an identity to draw against.
+ * How many of the {@link BUCKET_COUNT} buckets a percentage admits.
+ *
+ * percent has 0.01 granularity, so the threshold is an exact bucket count;
+ * rounding keeps float drift from admitting one extra bucket (0.07 / 100 *
+ * 10 000 is 7.000000000000001).
+ */
+function admittedBuckets(percent: number): number {
+  return Math.round((percent / 100) * BUCKET_COUNT);
+}
+
+/**
+ * The gate's verdict when the percentage alone settles it: everyone in, or
+ * everyone out. `undefined` means the gate has to draw a bucket — and only then
+ * does it need an identity to draw against.
  *
  * Evaluation asks this before resolving a bucketing key, so parking a flag at 0
  * or finishing an experiment at 100 does not start demanding a targeting key
  * from contexts that never needed one.
+ *
+ * Settled is asked in the same bucket counts the draw uses, not in percentages.
+ * A percentage below the 0.01 granularity floor rounds down to a threshold of
+ * zero buckets: an operator who types 0.001 for 0 has a gate that admits
+ * nobody, and comparing against 0 alone would have it demand a targeting key
+ * from every anonymous and service context first, then report
+ * TARGETING_KEY_MISSING on a gate that was closed either way. The 100 end is
+ * symmetric — 99.999 rounds to every bucket.
  */
 export function settledAllocation(allocation: TrafficAllocation): boolean | undefined {
-  if (allocation.percent >= 100) return true;
-  if (allocation.percent <= 0) return false;
+  const admitted = admittedBuckets(allocation.percent);
+  if (admitted >= BUCKET_COUNT) return true;
+  if (admitted <= 0) return false;
   return undefined;
 }

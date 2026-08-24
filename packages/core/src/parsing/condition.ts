@@ -90,7 +90,10 @@ function parseAttributeCondition(
       if (!isScalarList(value)) {
         fail(`${at}: ${operator} needs an array of strings or numbers`);
       }
-      return { attribute, operator, value };
+      // Copied for the reason {@link requireStringArray} copies: a condition
+      // holding the caller's own array would let a later push into the decoded
+      // payload change who an already-snapshotted rule matches.
+      return { attribute, operator, value: [...value] };
     }
     case 'contains':
     case 'startsWith':

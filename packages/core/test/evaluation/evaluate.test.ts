@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildTargetIndex, evaluateFlag } from '../../src/index.js';
-import type { FlagDefinition } from '../../src/index.js';
+import type { EvaluationContext, FlagDefinition } from '../../src/index.js';
 
 const booleanFlag: FlagDefinition<boolean> = {
   key: 'new-checkout',
@@ -161,6 +161,27 @@ describe('individual targets', () => {
       );
     }
   });
+
+  it('pins a targeting key that arrived as a number', () => {
+    // A context takes any JSON, and `targetingKey: user.id` off a numeric
+    // column is the ordinary case. Splits always bucketed it; targets and
+    // segment lists did not, so the pinned QA account was silently not pinned
+    // and an excluded subject was served the treatment anyway.
+    const numeric: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      targets: [{ variant: 'on', keys: ['12345'] }],
+    };
+    const context = { targetingKey: 12_345 } as unknown as EvaluationContext;
+
+    expect(evaluateFlag(numeric, context)).toMatchObject({
+      value: true,
+      variant: 'on',
+      reason: 'TARGETING_MATCH',
+    });
+    expect(evaluateFlag(numeric, context, { targetIndex: buildTargetIndex([numeric]) })).toEqual(
+      evaluateFlag(numeric, context),
+    );
+  });
 });
 
 describe('definitions the parser would have rejected', () => {
@@ -209,5 +230,28 @@ describe('definitions the parser would have rejected', () => {
 
     expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
     expect(result.errorMessage).toContain('not a usable definition');
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['a bare key', 'new-checkout'],
+    ['an object with no key', { enabled: true }],
+  ])('reports %s as not a definition rather than throwing', (_label, notAFlag) => {
+    // The catch that implements the no-throw contract names the flag in the
+    // message it builds, so it cannot also be what handles a flag with no name
+    // — it dereferenced the very thing that was missing.
+    const result = evaluateFlag(notAFlag as unknown as FlagDefinition, { targetingKey: 'u1' });
+
+    expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
+    expect(result.errorMessage).toContain('Not a flag definition');
+  });
+
+  it('reads a null context as an empty one, not as a broken flag', () => {
+    // An explicit null skips the parameter default. Reporting it as an invalid
+    // definition sends whoever reads the error after the wrong thing entirely.
+    const result = evaluateFlag(booleanFlag, null as unknown as EvaluationContext);
+
+    expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
   });
 });

@@ -25,6 +25,7 @@ import { drawAllocation, settledAllocation } from './bucketing.js';
 import { matchesConditions, readTargetingKey } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
+import { compileTargets } from './targets.js';
 import type { TargetIndex } from './targets.js';
 
 /**
@@ -48,22 +49,25 @@ export interface EvaluationEnvironment {
 const MAX_PREREQUISITE_DEPTH = 50;
 
 /**
- * Prerequisite bookkeeping for one evaluation.
+ * Raised when a chain runs deeper than {@link MAX_PREREQUISITE_DEPTH}, and
+ * caught by {@link evaluateFlag}, which reports it against the flag that was
+ * actually asked for.
  *
- * `memo` is what keeps the walk linear. Two flags that share a dependency must
- * cost one evaluation of it, not one per path that reaches it — otherwise a
- * chain of depth n costs 2^n, and a control plane can turn a single lookup into
- * seconds of CPU. Every entry was computed against the same context, which is
- * fixed for the whole walk.
- *
- * Built on the first flag that actually declares a prerequisite, and passed as
- * `undefined` until then: most flags have no dependencies at all, and a Set and
- * a Map allocated per lookup would be pure waste on the request path.
+ * Thrown rather than returned because depth is a property of the walk, not of
+ * the flag it stops at: the very same flag is thirty prerequisites below one
+ * root and fifty-one below another. A returned error would be memoised under
+ * that flag's key and would then answer for it on every later lookup sharing
+ * the memo — so which flags a bulk response called broken would come down to
+ * the order the snapshot happens to iterate in, and one flag would answer
+ * differently through `evaluate` than through `evaluateAll`. Unwinding to the
+ * root instead leaves the memo holding only results that stand on their own.
  */
-interface PrerequisiteWalk {
-  /** The flags on the current chain. Meeting one of them again is a cycle. */
-  readonly visiting: ReadonlySet<string>;
-  readonly memo: Map<string, EvaluationResult>;
+class PrerequisiteDepthError extends Error {
+  override readonly name = 'PrerequisiteDepthError';
+
+  constructor(deepest: string) {
+    super(`prerequisite chain more than ${MAX_PREREQUISITE_DEPTH} deep, reaching "${deepest}"`);
+  }
 }
 
 /**
@@ -74,6 +78,31 @@ interface PrerequisiteWalk {
  * with the request.
  */
 export type SharedPrerequisiteMemo = Map<string, EvaluationResult>;
+
+/** The flags on the chain being walked, and the memo they all share. */
+interface PrerequisiteChain {
+  /** Meeting one of these again is a cycle. */
+  readonly visiting: ReadonlySet<string>;
+  readonly memo: SharedPrerequisiteMemo;
+}
+
+/**
+ * What an evaluation carries down its prerequisite chain: a bare memo until
+ * some flag on the chain declares a prerequisite, a full chain from there on.
+ *
+ * The two shapes share one parameter so that starting a chain costs nothing
+ * until there is one to start. Most flags declare no prerequisite at all, and
+ * a bulk evaluation that seeded a Set per flag up front would allocate one for
+ * every flag in the ruleset only for {@link checkPrerequisites} to return
+ * before ever reading it.
+ *
+ * `memo` is what keeps the walk linear. Two flags that share a dependency must
+ * cost one evaluation of it, not one per path that reaches it — otherwise a
+ * chain of depth n costs 2^n, and a control plane can turn a single lookup into
+ * seconds of CPU. Every entry was computed against the same context, which is
+ * fixed for the whole walk.
+ */
+type PrerequisiteTrail = SharedPrerequisiteMemo | PrerequisiteChain;
 
 /**
  * A memo to hand to every {@link evaluateFlag} call of one bulk evaluation.
@@ -102,14 +131,19 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   environment: EvaluationEnvironment = {},
   memo?: SharedPrerequisiteMemo,
 ): EvaluationResult<T> {
+  // Hand-built call sites reach the entry point too, so its arguments have to
+  // survive being wrong. Checked ahead of the `try` rather than inside it: the
+  // catch below names the flag in every error it reports, and something that
+  // is not a definition has no name to report one under.
+  if (!isDefinitionLike(flag)) return unusableDefinition();
+
   try {
-    // Seeded here rather than inside the walk, so the single-lookup path — no
-    // memo, and usually no prerequisites either — still allocates nothing at
-    // all. A bulk evaluation pays one Set per flag and saves far more than
-    // that on the very first shared dependency.
-    const walk = memo === undefined ? undefined : { visiting: new Set([flag.key]), memo };
-    return evaluateGuarded(flag, context, environment, walk);
+    return evaluateGuarded(flag, contextOf(context), environment, memo);
   } catch (error) {
+    if (error instanceof PrerequisiteDepthError) {
+      return invalidDefinition(flag, `Flag "${flag.key}" has a ${error.message}`);
+    }
+
     // The no-throw contract has to hold for definitions that never went through
     // the parser too. A shape it would have rejected degrades to an ERROR
     // result rather than taking down the handler that hand-built it.
@@ -118,20 +152,39 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   }
 }
 
+/** Whether a value is enough of a definition to evaluate, or at least to name. */
+function isDefinitionLike(flag: unknown): boolean {
+  return typeof flag === 'object' && flag !== null && 'key' in flag && typeof flag.key === 'string';
+}
+
 /**
- * The pipeline body; `walk` carries the prerequisite chain and its memo, and is
- * `undefined` until some flag on the chain declares a prerequisite — or until a
- * bulk evaluation seeds one to share its memo across flags.
+ * The context to evaluate against.
+ *
+ * A JavaScript caller can pass an explicit `null`, which slips past the
+ * parameter default. That is the caller's mistake and not the definition's, so
+ * it reads as "no attributes" rather than throwing out of the first
+ * own-property probe and being reported as an unusable flag — which would send
+ * whoever reads the error after entirely the wrong thing.
+ */
+function contextOf(context: EvaluationContext | null | undefined): EvaluationContext {
+  return context ?? NO_CONTEXT;
+}
+
+const NO_CONTEXT: EvaluationContext = {};
+
+/**
+ * The pipeline body; `trail` carries the prerequisite memo, and the chain
+ * walked so far once some flag has started one. See {@link PrerequisiteTrail}.
  */
 function evaluateGuarded<T extends FlagValue>(
   flag: FlagDefinition<T>,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
-  walk?: PrerequisiteWalk,
+  trail: PrerequisiteTrail | undefined,
 ): EvaluationResult<T> {
   if (!flag.enabled) return resolve(flag, flag.offVariant, EvaluationReason.Disabled);
 
-  const gate = checkPrerequisites(flag, context, environment, walk);
+  const gate = checkPrerequisites(flag, context, environment, trail);
   if (gate !== undefined) return gate;
 
   const targeted = matchTarget(flag, readTargetingKey(context), environment.targetIndex);
@@ -248,21 +301,14 @@ function checkPrerequisites<T extends FlagValue>(
   flag: FlagDefinition<T>,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
-  walk: PrerequisiteWalk | undefined,
+  trail: PrerequisiteTrail | undefined,
 ): EvaluationResult<T> | undefined {
   const prerequisites = flag.prerequisites;
   if (prerequisites === undefined || prerequisites.length === 0) return undefined;
 
-  // The root of the walk: its own key has to be on the chain, or a hand-built
-  // flag naming itself would recurse instead of being reported as a cycle.
-  const chain: PrerequisiteWalk = walk ?? { visiting: new Set([flag.key]), memo: new Map() };
+  const chain = chainFrom(flag.key, trail);
 
-  if (chain.visiting.size > MAX_PREREQUISITE_DEPTH) {
-    return invalidDefinition(
-      flag,
-      `Flag "${flag.key}" sits more than ${MAX_PREREQUISITE_DEPTH} prerequisites deep`,
-    );
-  }
+  if (chain.visiting.size > MAX_PREREQUISITE_DEPTH) throw new PrerequisiteDepthError(flag.key);
 
   for (const prerequisite of prerequisites) {
     if (chain.visiting.has(prerequisite.flag)) {
@@ -313,22 +359,37 @@ function isGatedOff(reason: EvaluationReason): boolean {
   return reason === EvaluationReason.Disabled || reason === EvaluationReason.PrerequisiteFailed;
 }
 
-/** One dependency, evaluated at most once per request. See {@link PrerequisiteWalk}. */
+/**
+ * The chain to walk from here: the one already in progress, or a fresh one
+ * rooted at this flag.
+ *
+ * Built here rather than by the entry point, so a flag that declares no
+ * prerequisite — the overwhelming majority of any ruleset — costs no
+ * allocation at all, memo or no memo. The root's own key has to go on the
+ * chain, or a hand-built flag naming itself would recurse instead of being
+ * reported as a cycle.
+ */
+function chainFrom(key: string, trail: PrerequisiteTrail | undefined): PrerequisiteChain {
+  if (trail !== undefined && !(trail instanceof Map)) return trail;
+  return { visiting: new Set([key]), memo: trail ?? new Map() };
+}
+
+/** One dependency, evaluated at most once per request. See {@link PrerequisiteTrail}. */
 function evaluateDependency(
   dependency: FlagDefinition,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
-  walk: PrerequisiteWalk,
+  chain: PrerequisiteChain,
 ): EvaluationResult {
-  const cached = walk.memo.get(dependency.key);
+  const cached = chain.memo.get(dependency.key);
   if (cached !== undefined) return cached;
 
   const outcome = evaluateGuarded(dependency, context, environment, {
-    visiting: new Set([...walk.visiting, dependency.key]),
-    memo: walk.memo,
+    visiting: new Set([...chain.visiting, dependency.key]),
+    memo: chain.memo,
   });
 
-  walk.memo.set(dependency.key, outcome);
+  chain.memo.set(dependency.key, outcome);
   return outcome;
 }
 
@@ -338,23 +399,31 @@ function matchTarget(
   targetingKey: string | undefined,
   index: TargetIndex | undefined,
 ): string | undefined {
-  // Already resolved through `readTargetingKey`, which applies the one identity
-  // rule: an own property, a non-empty string, or nothing at all.
+  // Already resolved through {@link readTargetingKey}, which applies the one
+  // identity rule the whole engine shares: an own property, and a usable one.
   if (targetingKey === undefined) return undefined;
 
   // A snapshot has folded every flag's targets into one lookup, so the request
-  // path is a single probe however many keys are listed.
-  const compiled = index?.get(flag.key);
-  if (compiled !== undefined) return compiled.get(targetingKey);
-
-  if (flag.targets === undefined) return undefined;
-  // A target whose keys are not a list fails closed, exactly as it does when
-  // compiled — a bare string would otherwise match on any substring of itself.
-  return flag.targets.find(
-    (target) => Array.isArray(target.keys) && target.keys.includes(targetingKey),
-  )?.variant;
+  // path is a single probe however many keys are listed. A flag reaching here
+  // without one — evaluated directly, outside a snapshot — is folded on the
+  // spot rather than scanned by a second copy of the same rules: which target
+  // claims a key, and what a target whose `keys` is not a list matches, are
+  // decided in `compileTargets` and nowhere else.
+  const compiled = index?.get(flag.key) ?? compileTargets(flag);
+  return compiled?.get(targetingKey);
 }
 
+/**
+ * The result of serving one variant.
+ *
+ * The variant value and the metadata travel out by reference — copying either
+ * per evaluation would put an allocation on the request path for every object
+ * flag and every annotated one. What makes that safe is that the parser stores
+ * frozen copies of both (see `cloneJson`), so a caller cannot write through
+ * the result it was handed and change what the snapshot serves everyone after
+ * it. A definition assembled by hand, without the parser, is the assembler's
+ * own object and its own business.
+ */
 function resolve<T extends FlagValue>(
   flag: FlagDefinition<T>,
   variant: string,
@@ -395,6 +464,24 @@ function prerequisiteFailed<T extends FlagValue>(
   return {
     ...resolve(flag, flag.offVariant, EvaluationReason.PrerequisiteFailed),
     failedPrerequisite: prerequisite.flag,
+  };
+}
+
+/**
+ * The result for an argument that is not a flag definition at all.
+ *
+ * There is no key to report it under, because the caller handed over nothing
+ * that carries one. An empty key beats the alternative: a TypeError thrown out
+ * of the one function in the package documented never to throw.
+ */
+function unusableDefinition<T extends FlagValue>(): EvaluationResult<T> {
+  return {
+    key: '',
+    value: undefined,
+    variant: undefined,
+    reason: EvaluationReason.Error,
+    errorCode: EvaluationErrorCode.InvalidDefinition,
+    errorMessage: 'Not a flag definition: expected an object with a string key',
   };
 }
 

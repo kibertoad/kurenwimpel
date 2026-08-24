@@ -62,6 +62,14 @@ of it). A depth cap of 50 backs that up, since recursion can exhaust the
 stack before a memo helps; beyond it the graph is reported as an invalid
 definition.
 
+That one verdict is deliberately kept out of the memo. Depth is a property of
+the walk, not of the flag it stops at — the same flag sits thirty
+prerequisites below one root and fifty-one below another — so the cap unwinds
+to the flag that was actually asked for and is reported against it. Memoising
+it under the key it was raised at would let it answer for that flag on every
+later lookup sharing the memo, and which flags a bulk response called broken
+would come down to the order the snapshot happens to iterate in.
+
 ## Consequences
 
 - One kill switch can now fell a whole feature tree, which is the point.

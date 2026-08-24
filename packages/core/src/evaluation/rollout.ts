@@ -10,7 +10,7 @@
 import type { EvaluationContext } from '../model/context.js';
 import type { Rollout, RolloutBucket, RolloutSplit } from '../model/flag.js';
 import { BUCKET_COUNT, bucketOf } from './bucketing.js';
-import { readAttribute } from './conditions.js';
+import { identityOf, readAttribute } from './conditions.js';
 
 export interface PickOutcome {
   readonly variant?: string;
@@ -70,11 +70,9 @@ export function bucketingKeyFor(
 ): string | undefined {
   // Read through `readAttribute` whichever attribute it is: the identity a
   // split hashes must not be the one attribute resolved off the prototype
-  // chain. See {@link readTargetingKey}.
-  const raw = readAttribute(context, bucketBy ?? 'targetingKey');
-  if (typeof raw === 'string' && raw.length > 0) return raw;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-  return undefined;
+  // chain. See {@link readTargetingKey}. And resolved through `identityOf`,
+  // so what counts as an identity here is what counts as one everywhere else.
+  return identityOf(readAttribute(context, bucketBy ?? 'targetingKey'));
 }
 
 /**

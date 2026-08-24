@@ -1,3 +1,4 @@
+import { readTargetingKey } from '../evaluation/conditions.js';
 import { createSharedMemo, evaluateFlag } from '../evaluation/evaluate.js';
 import type { EvaluationEnvironment } from '../evaluation/evaluate.js';
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
@@ -78,6 +79,16 @@ export interface FeatureFlagClientOptions {
  */
 export class FeatureFlagClient {
   readonly #provider: FlagProvider;
+  /**
+   * The default context, copied rather than aliased.
+   *
+   * {@link FeatureFlagClient.#defaultEntries} is walked once, at construction;
+   * a caller that went on mutating the object it passed would have the two
+   * merge paths disagree — a lookup with no per-call context reading the live
+   * object, a lookup with one walking the entries captured here — and the same
+   * flag answering two ways in one process depending only on whether the call
+   * site passed a context.
+   */
   readonly #defaultContext: EvaluationContext;
   /** The default context's entries, walked once here instead of per evaluation. */
   readonly #defaultEntries: readonly (readonly [string, AttributeValue | undefined])[];
@@ -91,7 +102,7 @@ export class FeatureFlagClient {
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
-    this.#defaultContext = options.defaultContext ?? {};
+    this.#defaultContext = { ...options.defaultContext };
     this.#defaultEntries = Object.entries(this.#defaultContext);
     this.#onError = options.onError;
     this.#onImpression = options.onImpression;
@@ -124,13 +135,20 @@ export class FeatureFlagClient {
     // load hands over nothing to compare against — so there is no snapshot to
     // keep serving. Coming up ready on an empty one would answer every lookup
     // with FLAG_NOT_FOUND, which is the failure this method exists to prevent.
-    if (loaded === null) {
-      throw new Error(
-        `Provider "${this.#provider.name}" reported no change on the first load, so there is no ruleset to serve`,
-      );
-    }
+    if (loaded === null) throw this.#noFirstRuleset();
 
     this.#install(loaded);
+  }
+
+  /**
+   * The provider answered "unchanged" when it had been handed nothing to be
+   * unchanged from. Fatal at startup; reported, not thrown, when a background
+   * refresh is what happens to perform the first load.
+   */
+  #noFirstRuleset(): Error {
+    return new Error(
+      `Provider "${this.#provider.name}" reported no change on the first load, so there is no ruleset to serve`,
+    );
   }
 
   /**
@@ -149,9 +167,19 @@ export class FeatureFlagClient {
   }
 
   async #runRefresh(): Promise<boolean> {
+    const isFirstLoad = !this.#ready;
+
     try {
-      const loaded = await this.#provider.load(this.#ready ? this.#snapshot : undefined);
-      if (loaded === null) return false;
+      const loaded = await this.#provider.load(isFirstLoad ? undefined : this.#snapshot);
+      if (loaded === null) {
+        // `refresh` before `init` performs the first load, and reaches the
+        // answer `init` refuses to start on. It cannot throw at its caller, but
+        // returning a bare `false` would read as "nothing to install", when in
+        // fact nothing has ever been installed and every lookup is about to be
+        // answered PROVIDER_NOT_READY.
+        if (isFirstLoad) this.#report(this.#noFirstRuleset(), 'load');
+        return false;
+      }
 
       this.#install(loaded);
       return true;
@@ -366,6 +394,15 @@ export class FeatureFlagClient {
     if (this.#onImpression === undefined) return;
 
     const flagVersion = flag?.version;
+    // Resolved through the one identity rule rather than read off the context,
+    // so the feed reports the key targeting actually used. Reading it directly
+    // put whatever the caller passed on the event: a number in a field typed
+    // string, breaking any downstream join on subject id; an empty string
+    // alongside TARGETING_KEY_MISSING, counting an exposure for a subject that
+    // was never bucketed; and, on a call with no per-call context, one
+    // inherited from the default context's prototype and invisible to
+    // targeting itself.
+    const targetingKey = readTargetingKey(context);
 
     try {
       this.#onImpression({
@@ -375,7 +412,7 @@ export class FeatureFlagClient {
         reason: result.reason,
         ...(result.ruleId === undefined ? {} : { ruleId: result.ruleId }),
         ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
-        ...(context.targetingKey === undefined ? {} : { targetingKey: context.targetingKey }),
+        ...(targetingKey === undefined ? {} : { targetingKey }),
         ...(flagVersion === undefined ? {} : { flagVersion }),
         ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
         timestamp: Date.now(),

@@ -93,18 +93,20 @@ export function parseRuleset(raw: unknown): ParseRulesetResult {
  * zero issues to explain why. A flag keyed `flags` or `segments` in the legacy
  * object form disappeared the same way.
  *
- * Scalars pass silently: a control plane is free to ship `version`, `etag`, or
- * a timestamp alongside, and drawing an issue on every refresh for those would
- * be noise rather than a finding.
+ * Only a value that would actually parse as a collection of definitions is
+ * reported. A control plane is free to ship `version`, `etag`, a timestamp —
+ * or a nested `metadata`, `links`, `pagination` envelope — alongside, and
+ * drawing an issue on every refresh, every thirty seconds, for a field that
+ * could never have held the missing definitions is noise rather than a
+ * finding, with nothing the operator can do about it short of flattening the
+ * document.
  */
 function checkDocumentKeys(raw: Record<string, unknown>): FlagParseIssue[] {
   const issues: FlagParseIssue[] = [];
 
   for (const key of Object.keys(raw)) {
     if (key === 'flags' || key === 'segments') continue;
-
-    const value = raw[key];
-    if (!Array.isArray(value) && !isRecord(value)) continue;
+    if (!holdsDefinitions(raw[key])) continue;
 
     issues.push({
       at: key,
@@ -113,6 +115,27 @@ function checkDocumentKeys(raw: Record<string, unknown>): FlagParseIssue[] {
   }
 
   return issues;
+}
+
+/**
+ * Whether a value is what a misplaced or shadowed definition would look like:
+ * one definition, a non-empty array of them, or a non-empty key-to-definition
+ * object.
+ *
+ * Every form carries the key on the definition itself — the legacy object form
+ * is parsed by its values, not by its property names — so requiring one is
+ * what separates a definition from any other nested object a document might
+ * carry alongside.
+ */
+function holdsDefinitions(value: unknown): boolean {
+  if (isDefinition(value)) return true;
+  if (isRecord(value)) return holdsDefinitions(Object.values(value));
+  if (!Array.isArray(value) || value.length === 0) return false;
+  return value.every((entry: unknown) => isDefinition(entry));
+}
+
+function isDefinition(value: unknown): boolean {
+  return isRecord(value) && typeof value['key'] === 'string';
 }
 
 function emptyFlags(): ParseFlagsResult {

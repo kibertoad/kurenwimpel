@@ -19,8 +19,15 @@ export function parseSegmentDefinition(raw: unknown): SegmentDefinition {
   const excluded = parseKeyList(raw['excluded'], key, 'excluded');
   const rules = parseSegmentRules(raw['rules'], key);
 
-  if (included === undefined && excluded === undefined && rules === undefined) {
-    fail(`segment ${key}: needs at least one of included, excluded, or rules`);
+  // Content, not presence. A segment whose criteria are all empty lists can
+  // never match anybody, so every `inSegment` naming it matches nobody and
+  // every `notInSegment` matches everybody, forever and without complaint —
+  // the same silence a misspelled segment key is checked for in
+  // `references.ts`, reached through a different door. An operator who emptied
+  // the list in the UI gets an issue rather than nothing.
+  const criteria = (included?.length ?? 0) + (excluded?.length ?? 0) + (rules?.length ?? 0);
+  if (criteria === 0) {
+    fail(`segment ${key}: needs a non-empty included, excluded, or rules list`);
   }
 
   return {
