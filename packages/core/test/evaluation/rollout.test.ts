@@ -324,3 +324,50 @@ describe('rollouts', () => {
     ).toMatchObject({ value: false, variant: 'off', reason: 'SPLIT', ruleId: 'experiment' });
   });
 });
+
+describe('a split never serves weight nobody asked for', () => {
+  it('leaves a zero-weight bucket unserved for every subject', () => {
+    // The float-drift fallback used to return the last bucket outright, which
+    // can be one an operator parked at zero precisely so it would never ship.
+    const flag: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      rollout: [
+        { variant: 'on', weight: 100 },
+        { variant: 'off', weight: 0 },
+      ],
+    };
+
+    const served = new Set(
+      users(5_000).map((key) => evaluateFlag(flag, { targetingKey: key }).variant),
+    );
+
+    expect(served).toEqual(new Set(['on']));
+  });
+
+  it('buckets on the targeting key only when the context owns it', () => {
+    // An inherited key must not decide a split: the identity that drives
+    // bucketing goes through the same own-property read as every condition.
+    const flag: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      rollout: [{ variant: 'on', weight: 100 }],
+    };
+
+    const inherited = Object.create({ targetingKey: 'user-1' }) as { targetingKey?: string };
+    const result = evaluateFlag(flag, inherited);
+
+    expect(result.errorCode).toBe('TARGETING_KEY_MISSING');
+    expect(evaluateFlag(flag, { targetingKey: 'user-1' }).variant).toBe('on');
+  });
+
+  it('buckets on an inherited bucketBy attribute no more than on an inherited key', () => {
+    const flag: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      rollout: { bucketBy: 'accountId', buckets: [{ variant: 'on', weight: 100 }] },
+    };
+
+    const inherited = Object.create({ accountId: 'acct-1' }) as { accountId?: string };
+
+    expect(evaluateFlag(flag, inherited).errorCode).toBe('TARGETING_KEY_MISSING');
+    expect(evaluateFlag(flag, { accountId: 'acct-1' }).variant).toBe('on');
+  });
+});

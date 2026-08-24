@@ -39,6 +39,20 @@ export function readAttribute(
 }
 
 /**
+ * The identity a context carries, under the same own-property rule as every
+ * other attribute, and the same non-empty-string rule everywhere it is used.
+ *
+ * Reading `context.targetingKey` directly instead would make the one attribute
+ * that decides bucketing and individual targeting the one attribute read off
+ * the prototype chain: a context inheriting a targeting key would be bucketed
+ * on it while `targetingKey exists` answered false for the same subject.
+ */
+export function readTargetingKey(context: EvaluationContext): string | undefined {
+  const raw = readAttribute(context, 'targetingKey');
+  return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+}
+
+/**
  * Evaluates a single predicate.
  *
  * Array-valued attributes are treated as sets: `in` and `contains` match when
@@ -71,10 +85,13 @@ export function matchesCondition(
       return actual !== undefined && actual !== condition.value;
     }
     case 'in': {
-      return isInList(actual, condition.value);
+      return listMembership(actual, condition.value) === true;
     }
     case 'notIn': {
-      return actual !== undefined && !isInList(actual, condition.value);
+      // Neither operator matches while membership is undecidable, so an absent
+      // attribute is not evidence of exclusion and a malformed list does not
+      // turn the rule on for everyone it was written to exclude.
+      return listMembership(actual, condition.value) === false;
     }
     case 'contains':
     case 'startsWith':
@@ -113,10 +130,10 @@ export function matchesCondition(
  * trusted to the type, and one that does not have it fails closed.
  */
 export function isInSegment(segment: Segment, context: EvaluationContext): boolean {
-  const key = context.targetingKey;
-
   // An empty string is not an identity, here or anywhere else in evaluation.
-  if (typeof key === 'string' && key.length > 0) {
+  const key = readTargetingKey(context);
+
+  if (key !== undefined) {
     if (holds(segment.excluded, key)) return false;
     if (holds(segment.included, key)) return true;
   }
@@ -188,14 +205,34 @@ function isSegmentCondition(condition: Condition): condition is SegmentCondition
   return condition.operator === 'inSegment' || condition.operator === 'notInSegment';
 }
 
-function isInList(actual: AttributeValue | undefined, list: readonly (string | number)[]): boolean {
-  if (actual === undefined) return false;
+/**
+ * Set membership, as a tri-state: `true` in, `false` out, `undefined` when the
+ * question cannot be answered at all.
+ *
+ * The undecidable case is what keeps `notIn` honest. A hand-built or JSON-cast
+ * condition can carry a scalar where the type promises a list, and reading
+ * that as an empty set would answer "not a member" for everyone — turning a
+ * rule written to exclude a cohort into one that matches the whole world.
+ * Trusting the type instead is worse still: `list.includes` on a string is
+ * substring matching, so `plan in ['pro']` written as `plan in 'pro'` would
+ * match every plan spelled with any substring of it.
+ */
+function listMembership(
+  actual: AttributeValue | undefined,
+  list: readonly (string | number)[],
+): boolean | undefined {
+  if (actual === undefined) return undefined;
+  if (!Array.isArray(list)) return undefined;
+
   if (Array.isArray(actual)) {
     return (actual as readonly unknown[]).some(
       (item) => (typeof item === 'string' || typeof item === 'number') && list.includes(item),
     );
   }
   if (typeof actual === 'string' || typeof actual === 'number') return list.includes(actual);
+
+  // An attribute of a type no list can hold — an object, a boolean, a null —
+  // is out of the set rather than unanswerable: `notIn` should match it.
   return false;
 }
 

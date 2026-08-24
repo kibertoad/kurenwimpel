@@ -208,3 +208,55 @@ describe('segments', () => {
     expect(isInSegment(negated, { targetingKey: 'someone' })).toBe(false);
   });
 });
+
+// The type says `value` is a list, but hand-built and JSON-cast definitions bypass
+// the parser — the same path every other guard in this module exists for.
+// `list.includes` on a string is substring matching, so trusting the type turned
+// `plan in ['pro']` into "any plan spelled inside 'pro'".
+const scalar = (operator: 'in' | 'notIn'): Condition =>
+  ({ attribute: 'plan', operator, value: 'pro' }) as unknown as Condition;
+
+describe('list operators with a malformed value', () => {
+  it('never substring-matches a scalar standing in for a list', () => {
+    expect(check(scalar('in'), { plan: 'p' })).toBe(false);
+    expect(check(scalar('in'), { plan: 'ro' })).toBe(false);
+    expect(check(scalar('in'), { plan: 'pro' })).toBe(false);
+  });
+
+  it('fails closed on both operators, so notIn does not match the whole world', () => {
+    // The dangerous direction: an undecidable list must not read as "not a
+    // member of anything" and turn the rule on for everyone it excluded.
+    expect(check(scalar('notIn'), { plan: 'p' })).toBe(false);
+    expect(check(scalar('notIn'), { plan: 'enterprise' })).toBe(false);
+  });
+
+  it('still decides both operators for a well-formed list', () => {
+    expect(check({ attribute: 'plan', operator: 'in', value: ['pro'] }, { plan: 'pro' })).toBe(
+      true,
+    );
+    expect(check({ attribute: 'plan', operator: 'notIn', value: ['pro'] }, { plan: 'free' })).toBe(
+      true,
+    );
+    // An attribute of a type no list can hold is out of the set, not unanswerable.
+    expect(check({ attribute: 'plan', operator: 'notIn', value: ['pro'] }, { plan: true })).toBe(
+      true,
+    );
+  });
+});
+
+describe('the targeting key is read like every other attribute', () => {
+  it('does not resolve an inherited targeting key for segment membership', () => {
+    // A split used to bucket on a prototype-inherited key while `exists` said
+    // the same context had none. One identity, one answer.
+    const context = Object.create({ targetingKey: 'inherited' }) as Record<string, AttributeValue>;
+    const segment = compileSegment({ key: 'beta', included: ['inherited'] });
+
+    expect(isInSegment(segment, context)).toBe(false);
+    expect(check({ attribute: 'targetingKey', operator: 'exists' }, context)).toBe(false);
+  });
+
+  it('still resolves an own targeting key', () => {
+    const segment = compileSegment({ key: 'beta', included: ['u-1'] });
+    expect(isInSegment(segment, { targetingKey: 'u-1' })).toBe(true);
+  });
+});

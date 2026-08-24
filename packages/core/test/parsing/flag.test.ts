@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FlagParseError, parseFlagDefinition } from '../../src/index.js';
+import type { FlagParseIssue } from '../../src/index.js';
 
 const valid = {
   key: 'new-checkout',
@@ -187,11 +188,26 @@ describe('parseFlagDefinition', () => {
     );
   });
 
-  it('rejects a malformed salt or version instead of silently dropping it', () => {
+  it('rejects a malformed salt instead of silently dropping it', () => {
     // A dropped salt would reshuffle every split of the flag.
     expect(() => parseFlagDefinition({ ...valid, salt: 7 })).toThrow(/salt/u);
     expect(() => parseFlagDefinition({ ...valid, salt: '' })).toThrow(/salt/u);
-    expect(() => parseFlagDefinition({ ...valid, version: '3' })).toThrow(/version/u);
+  });
+
+  it('keeps serving a flag whose version is malformed, and says so', () => {
+    // version is an analytics label — nothing evaluates it — so rejecting the
+    // flag over it would trade a cosmetic mismatch for FLAG_NOT_FOUND.
+    const warnings: FlagParseIssue[] = [];
+    const parsed = parseFlagDefinition({ ...valid, version: '3' }, warnings);
+
+    expect(parsed.key).toBe(valid.key);
+    expect(parsed.version).toBeUndefined();
+    expect(warnings).toEqual([{ at: valid.key, message: expect.stringMatching(/version/u) }]);
+  });
+
+  it('takes a valid version, and reads null as absent', () => {
+    expect(parseFlagDefinition({ ...valid, version: 4 }).version).toBe(4);
+    expect(parseFlagDefinition({ ...valid, version: null }).version).toBeUndefined();
   });
 
   it('drops an empty rollout array rather than producing an unservable split', () => {

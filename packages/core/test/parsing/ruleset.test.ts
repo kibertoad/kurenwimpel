@@ -237,3 +237,106 @@ describe('parseRuleset cross-references', () => {
     expect(parseRuleset({ flags: [flag] }).issues).toEqual([]);
   });
 });
+
+describe('unrecognised keys in a ruleset document', () => {
+  const gatedOnSegment = {
+    ...validFlag,
+    rules: [
+      {
+        id: 'beta',
+        conditions: [{ operator: 'inSegment', segments: ['beta-testers'] }],
+        variant: 'on',
+      },
+    ],
+  };
+
+  it('reports a misspelled segments key instead of losing every segment in silence', () => {
+    // The typo used to cost the segments *and* the dangling-segment check:
+    // the document looked like it declared no segment side, so every inSegment
+    // rule matched nobody with nothing to explain why.
+    const result = parseRuleset({ flags: [gatedOnSegment], segmnets: [validSegment] });
+
+    expect(result.segments).toEqual([]);
+    expect(result.issues).toEqual([
+      { at: 'segmnets', message: expect.stringMatching(/unrecognised top-level key "segmnets"/u) },
+    ]);
+  });
+
+  it('reports a flag that the document form shadows', () => {
+    // The legacy key-to-definition form cannot use `flags` or `segments` as a
+    // flag key. That was already true; now it is said out loud.
+    const result = parseRuleset({ checkout: validFlag, segments: [validSegment] });
+
+    expect(result.flags).toEqual([]);
+    expect(result.issues).toEqual([
+      { at: 'checkout', message: expect.stringMatching(/unrecognised top-level key "checkout"/u) },
+    ]);
+  });
+
+  it('stays quiet about scalar document metadata', () => {
+    // A control plane is free to ship a revision alongside the definitions.
+    const result = parseRuleset({
+      flags: [validFlag],
+      segments: [validSegment],
+      version: 'rev-42',
+      updatedAt: 1_700_000_000,
+    });
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('says nothing about the legacy object form when no document key is present', () => {
+    expect(parseRuleset({ 'new-checkout': validFlag }).issues).toEqual([]);
+  });
+});
+
+describe('prerequisite cycles', () => {
+  const linked = (key: string, dependsOn: string): unknown => ({
+    ...validFlag,
+    key,
+    prerequisites: [{ flag: dependsOn, variants: ['on'] }],
+  });
+
+  it('reports a two-flag cycle at parse time', () => {
+    // Evaluation already catches this and answers INVALID_DEFINITION, but that
+    // carries no value at all and only surfaces once a request arrives.
+    const result = parseRuleset([linked('a', 'b'), linked('b', 'a')]);
+
+    expect(result.flags).toHaveLength(2);
+    expect(result.issues).toEqual([{ at: 'b', message: 'flag b: prerequisite a closes a cycle' }]);
+  });
+
+  it('reports a longer cycle once, not once per path into it', () => {
+    const result = parseRuleset([linked('a', 'b'), linked('b', 'c'), linked('c', 'a')]);
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]?.message).toMatch(/closes a cycle/u);
+  });
+
+  it('leaves an acyclic diamond alone', () => {
+    // a → b, a → c, b → d, c → d: d is reached twice and is not a cycle.
+    const diamond = [
+      {
+        ...validFlag,
+        key: 'a',
+        prerequisites: [
+          { flag: 'b', variants: ['on'] },
+          { flag: 'c', variants: ['on'] },
+        ],
+      },
+      linked('b', 'd'),
+      linked('c', 'd'),
+      { ...validFlag, key: 'd' },
+    ];
+
+    expect(parseRuleset(diamond).issues).toEqual([]);
+  });
+
+  it('does not mistake a dangling prerequisite for a cycle', () => {
+    const result = parseRuleset([linked('a', 'gone')]);
+
+    expect(result.issues).toEqual([
+      { at: 'a', message: 'flag a: prerequisite gone is not in this ruleset' },
+    ]);
+  });
+});

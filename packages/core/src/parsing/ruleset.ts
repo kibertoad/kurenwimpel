@@ -57,7 +57,9 @@ export function parseSegmentDefinitions(raw: unknown): ParseSegmentsResult {
  *   each side is again an array or a key-to-definition object.
  *
  * A key-to-definition object cannot itself use `flags` or `segments` as flag
- * keys — the document form wins that ambiguity.
+ * keys — the document form wins that ambiguity, and says so: anything else in
+ * the document that could have been a definition collection is reported rather
+ * than dropped. See {@link checkDocumentKeys}.
  *
  * References between the two sides are checked once both are parsed; see
  * {@link checkCrossReferences}.
@@ -74,10 +76,43 @@ export function parseRuleset(raw: unknown): ParseRulesetResult {
     const segmentsPart =
       rawSegments === undefined ? emptySegments() : parseSegmentDefinitions(rawSegments);
 
-    return combine(flagsPart, segmentsPart, rawSegments !== undefined);
+    return combine(flagsPart, segmentsPart, rawSegments !== undefined, checkDocumentKeys(raw));
   }
 
-  return combine(parseFlagDefinitions(raw), emptySegments(), false);
+  return combine(parseFlagDefinitions(raw), emptySegments(), false, []);
+}
+
+/**
+ * Reports document keys that are neither `flags` nor `segments` but hold
+ * something shaped like a collection of definitions.
+ *
+ * This is the diagnostic for a typo. `segmnets: [...]` used to parse clean:
+ * the segments vanished, and because the document then looked like it declared
+ * no segment side at all, {@link checkCrossReferences} skipped the
+ * dangling-segment check too — so every `inSegment` rule matched nobody, with
+ * zero issues to explain why. A flag keyed `flags` or `segments` in the legacy
+ * object form disappeared the same way.
+ *
+ * Scalars pass silently: a control plane is free to ship `version`, `etag`, or
+ * a timestamp alongside, and drawing an issue on every refresh for those would
+ * be noise rather than a finding.
+ */
+function checkDocumentKeys(raw: Record<string, unknown>): FlagParseIssue[] {
+  const issues: FlagParseIssue[] = [];
+
+  for (const key of Object.keys(raw)) {
+    if (key === 'flags' || key === 'segments') continue;
+
+    const value = raw[key];
+    if (!Array.isArray(value) && !isRecord(value)) continue;
+
+    issues.push({
+      at: key,
+      message: `unrecognised top-level key "${key}" — a ruleset document declares "flags" and "segments"`,
+    });
+  }
+
+  return issues;
 }
 
 function emptyFlags(): ParseFlagsResult {
@@ -92,11 +127,13 @@ function combine(
   flagsPart: ParseFlagsResult,
   segmentsPart: ParseSegmentsResult,
   segmentsKnown: boolean,
+  documentIssues: readonly FlagParseIssue[],
 ): ParseRulesetResult {
   return {
     flags: flagsPart.flags,
     segments: segmentsPart.segments,
     issues: [
+      ...documentIssues,
       ...flagsPart.issues,
       ...segmentsPart.issues,
       ...checkCrossReferences(flagsPart.flags, segmentsPart.segments, segmentsKnown),
@@ -130,18 +167,26 @@ function collectEntries(raw: unknown, what: 'flags' | 'segments'): CollectedEntr
   };
 }
 
+/**
+ * `parse` is handed a sink for the defects that do not cost the definition. The
+ * sink is local to each entry and merged only once the definition survives, so
+ * a flag that goes on to be rejected does not also leave a warning about a
+ * field nobody will ever read.
+ */
 function parseEach<T extends { readonly key: string }>(
   entries: readonly [string, unknown][],
   issues: FlagParseIssue[],
-  parse: (raw: unknown) => T,
+  parse: (raw: unknown, warnings: FlagParseIssue[]) => T,
   noun: 'flag' | 'segment',
 ): T[] {
   const parsed: T[] = [];
   const seen = new Set<string>();
 
   for (const [at, entry] of entries) {
+    const warnings: FlagParseIssue[] = [];
+
     try {
-      const definition = parse(entry);
+      const definition = parse(entry, warnings);
 
       // A snapshot is indexed by key, so a repeat silently deletes the
       // definition before it. Keep the first and report the rest: which of two
@@ -155,6 +200,7 @@ function parseEach<T extends { readonly key: string }>(
       }
 
       seen.add(definition.key);
+      issues.push(...warnings);
       parsed.push(definition);
     } catch (error) {
       issues.push({

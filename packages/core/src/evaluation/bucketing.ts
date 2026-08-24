@@ -115,9 +115,22 @@ export function isAllocated(
   salt: string,
   bucketingKey: string,
 ): boolean {
-  const settled = settledAllocation(allocation);
-  if (settled !== undefined) return settled;
+  return settledAllocation(allocation) ?? drawAllocation(allocation, salt, bucketingKey);
+}
 
+/**
+ * The gate's draw, for an allocation {@link settledAllocation} has already left
+ * undecided.
+ *
+ * Split out so evaluation, which asks that question first to know whether it
+ * even needs an identity, does not pay for asking it twice on every gated
+ * lookup. {@link isAllocated} stays the entry point that checks both halves.
+ */
+export function drawAllocation(
+  allocation: TrafficAllocation,
+  salt: string,
+  bucketingKey: string,
+): boolean {
   const domain =
     allocation.seed === undefined ? ['allocation', salt] : ['allocation', salt, allocation.seed];
 

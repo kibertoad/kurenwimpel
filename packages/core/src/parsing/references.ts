@@ -2,10 +2,10 @@
  * Cross-document validation: the references one definition makes into another.
  *
  * A flag can be validated on its own — its own variant names, its own weights —
- * but a prerequisite's variant list and an `inSegment` key only mean something
- * against the rest of the payload. Those are checked here, where `parseRuleset`
- * has both sides in hand, rather than in `parseFlagDefinition`, which sees one
- * definition at a time.
+ * but a prerequisite's variant list, an `inSegment` key, and the shape of the
+ * dependency graph only mean something against the rest of the payload. Those
+ * are checked here, where `parseRuleset` has both sides in hand, rather than in
+ * `parseFlagDefinition`, which sees one definition at a time.
  *
  * A dangling reference is reported, not dropped. Every one of them already
  * fails closed at evaluation — a prerequisite that cannot hold serves the off
@@ -20,6 +20,7 @@ import type { SegmentDefinition } from '../model/segment.js';
 import type { FlagParseIssue } from './primitives.js';
 
 const NO_SEGMENTS: readonly string[] = [];
+const NO_EDGES: readonly string[] = [];
 
 /**
  * Checks every flag-to-flag and flag-to-segment reference in a parsed ruleset.
@@ -48,7 +49,77 @@ export function checkCrossReferences(
     if (segmentKeys !== undefined) checkSegmentRefs(flag, segmentKeys, issues);
   }
 
+  checkPrerequisiteCycles(flags, issues);
+
   return issues;
+}
+
+/**
+ * Reports every prerequisite cycle in the graph.
+ *
+ * A cycle is the one dangling-reference case where the safe behaviour is not
+ * already good enough. The runtime guard in `evaluateFlag` does catch it and
+ * names it, so nothing wrong is served — but the answer carries no value at
+ * all, so every SDK falls back to its own hardcoded default, and it only
+ * surfaces once a request reaches the flag. ADR 0006 keeps that guard as the
+ * one that cannot be bypassed and calls a parse-time lint additive; this is
+ * that lint. The graph is already in hand for the reference checks above.
+ */
+function checkPrerequisiteCycles(flags: readonly FlagDefinition[], issues: FlagParseIssue[]): void {
+  const edges = new Map(
+    flags.map((flag): [string, readonly string[]] => [
+      flag.key,
+      (flag.prerequisites ?? []).map((prerequisite) => prerequisite.flag),
+    ]),
+  );
+
+  const done = new Set<string>();
+  const onPath = new Set<string>();
+  const reported = new Set<string>();
+
+  for (const root of edges.keys()) {
+    if (done.has(root)) continue;
+
+    // Iterative: a definition can nest prerequisites far deeper than any real
+    // graph, and the parser must not put its own stack at risk finding out.
+    const stack: { readonly key: string; next: number }[] = [{ key: root, next: 0 }];
+    onPath.add(root);
+
+    while (stack.length > 0) {
+      const frame = stack.at(-1)!;
+      const neighbours = edges.get(frame.key) ?? NO_EDGES;
+
+      if (frame.next >= neighbours.length) {
+        onPath.delete(frame.key);
+        done.add(frame.key);
+        stack.pop();
+        continue;
+      }
+
+      const next = neighbours[frame.next++]!;
+
+      // Only an edge inside this ruleset can close a cycle; a dangling one is
+      // already reported by checkPrerequisiteRefs.
+      if (!edges.has(next)) continue;
+
+      if (onPath.has(next)) {
+        // One issue per flag that closes a cycle, not one per path into it.
+        if (!reported.has(frame.key)) {
+          reported.add(frame.key);
+          issues.push({
+            at: frame.key,
+            message: `flag ${frame.key}: prerequisite ${next} closes a cycle`,
+          });
+        }
+        continue;
+      }
+
+      if (done.has(next)) continue;
+
+      onPath.add(next);
+      stack.push({ key: next, next: 0 });
+    }
+  }
 }
 
 /**

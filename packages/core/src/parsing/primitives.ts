@@ -31,6 +31,43 @@ export function isScalarList(value: unknown): value is (string | number)[] {
   );
 }
 
+/**
+ * A deep copy of a validated JSON value.
+ *
+ * A snapshot promises an immutable, point-in-time view, and returning the
+ * caller's own object would break that promise the moment anyone still holding
+ * the decoded payload touched it — a provider that caches a response body, a
+ * `StaticProvider` handed a live config object, a fixture shared across tests.
+ *
+ * Hand-rolled rather than `structuredClone`: core does not commit consumers to
+ * a platform global (see the TextEncoder note in `bucketing.ts`), and this
+ * cannot throw on a value that only looks like JSON.
+ */
+export function cloneJson<T>(value: T): T {
+  if (Array.isArray(value)) {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return value.map((item: unknown) => cloneJson(item)) as T;
+  }
+
+  if (isRecord(value)) {
+    const copy: Record<string, unknown> = {};
+    for (const field of Object.keys(value)) {
+      // Defined rather than assigned: `copy['__proto__'] = x` would run the
+      // inherited setter and silently drop the key instead of copying it.
+      Object.defineProperty(copy, field, {
+        value: cloneJson(value[field]),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    return copy as T;
+  }
+
+  return value;
+}
+
 export function requireString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value.length === 0) {
     fail(`${field} must be a non-empty string`);

@@ -70,9 +70,13 @@ definition.
   evaluations; if experiment analysis ever needs dependency exposures, that
   is an additive change in the client, not the evaluator.
 - Cross-flag validation (does the referenced flag exist? are the listed
-  variants real?) cannot happen in the per-flag parser; it surfaces at
-  evaluation as a failed prerequisite. A control plane can lint the graph;
-  the evaluator stays safe without it.
+  variants real? does the graph contain a cycle?) cannot happen in the
+  per-flag parser, which sees one definition at a time. It happens a level up,
+  in `parseRuleset`, where the whole payload is in hand — see
+  `parsing/references.ts` — and it reports rather than drops, because every
+  one of these already fails closed at evaluation. That lint is additive, as
+  the alternative below says: a definition that never went through the parser
+  still meets the runtime guard, which is the one that cannot be bypassed.
 
 ## Alternatives rejected
 

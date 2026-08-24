@@ -34,12 +34,24 @@ export type { EvaluationResult } from './model/result.js';
 export type { Segment, SegmentDefinition, SegmentRule } from './model/segment.js';
 
 // evaluation
-export { BUCKET_COUNT, bucketOf, isAllocated, murmurHash3 } from './evaluation/bucketing.js';
-export { isInSegment, matchesCondition, matchesConditions } from './evaluation/conditions.js';
+export {
+  BUCKET_COUNT,
+  bucketOf,
+  drawAllocation,
+  isAllocated,
+  murmurHash3,
+  settledAllocation,
+} from './evaluation/bucketing.js';
+export {
+  isInSegment,
+  matchesCondition,
+  matchesConditions,
+  readAttribute,
+  readTargetingKey,
+} from './evaluation/conditions.js';
 export type { SegmentMap } from './evaluation/conditions.js';
-export { evaluateFlag } from './evaluation/evaluate.js';
-export type { EvaluationEnvironment } from './evaluation/evaluate.js';
-export { pickFromRollout } from './evaluation/rollout.js';
+export { createSharedMemo, evaluateFlag } from './evaluation/evaluate.js';
+export type { EvaluationEnvironment, SharedPrerequisiteMemo } from './evaluation/evaluate.js';
 export { compileSegment } from './evaluation/segments.js';
 export { buildTargetIndex, compileTargets } from './evaluation/targets.js';
 export type { TargetIndex } from './evaluation/targets.js';

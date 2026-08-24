@@ -21,8 +21,8 @@ import type { FlagDefinition, Prerequisite } from '../model/flag.js';
 import type { FlagValue } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
-import { isAllocated, settledAllocation } from './bucketing.js';
-import { matchesConditions } from './conditions.js';
+import { drawAllocation, settledAllocation } from './bucketing.js';
+import { matchesConditions, readTargetingKey } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
 import type { TargetIndex } from './targets.js';
@@ -66,14 +66,49 @@ interface PrerequisiteWalk {
   readonly memo: Map<string, EvaluationResult>;
 }
 
-/** Evaluates one flag against a context. The entry point of the whole core. */
+/**
+ * A prerequisite memo shared by several flags evaluated against one context.
+ *
+ * Opaque on purpose: it is a cache keyed by flag, valid only for the context it
+ * was filled against. Build one with {@link createSharedMemo} and discard it
+ * with the request.
+ */
+export type SharedPrerequisiteMemo = Map<string, EvaluationResult>;
+
+/**
+ * A memo to hand to every {@link evaluateFlag} call of one bulk evaluation.
+ *
+ * Each flag otherwise seeds a memo of its own, which keeps a single flag's
+ * chain linear but does nothing across flags: a kill switch that gates 200 of
+ * them is evaluated 200 times, and everything beneath it with it. Sharing the
+ * memo makes a bulk response O(flags + edges) instead of O(flags × depth).
+ *
+ * Only the memo is shared. Every flag still gets its own `visiting` chain, or
+ * one flag's ancestry would read as another flag's cycle.
+ */
+export function createSharedMemo(): SharedPrerequisiteMemo {
+  return new Map();
+}
+
+/**
+ * Evaluates one flag against a context. The entry point of the whole core.
+ *
+ * `memo` is for evaluating many flags against one context; see
+ * {@link createSharedMemo}. A single lookup should omit it.
+ */
 export function evaluateFlag<T extends FlagValue = FlagValue>(
   flag: FlagDefinition<T>,
   context: EvaluationContext = {},
   environment: EvaluationEnvironment = {},
+  memo?: SharedPrerequisiteMemo,
 ): EvaluationResult<T> {
   try {
-    return evaluateGuarded(flag, context, environment);
+    // Seeded here rather than inside the walk, so the single-lookup path — no
+    // memo, and usually no prerequisites either — still allocates nothing at
+    // all. A bulk evaluation pays one Set per flag and saves far more than
+    // that on the very first shared dependency.
+    const walk = memo === undefined ? undefined : { visiting: new Set([flag.key]), memo };
+    return evaluateGuarded(flag, context, environment, walk);
   } catch (error) {
     // The no-throw contract has to hold for definitions that never went through
     // the parser too. A shape it would have rejected degrades to an ERROR
@@ -85,7 +120,8 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
 
 /**
  * The pipeline body; `walk` carries the prerequisite chain and its memo, and is
- * `undefined` until some flag on the chain declares a prerequisite.
+ * `undefined` until some flag on the chain declares a prerequisite — or until a
+ * bulk evaluation seeds one to share its memo across flags.
  */
 function evaluateGuarded<T extends FlagValue>(
   flag: FlagDefinition<T>,
@@ -98,7 +134,7 @@ function evaluateGuarded<T extends FlagValue>(
   const gate = checkPrerequisites(flag, context, environment, walk);
   if (gate !== undefined) return gate;
 
-  const targeted = matchTarget(flag, context.targetingKey, environment.targetIndex);
+  const targeted = matchTarget(flag, readTargetingKey(context), environment.targetIndex);
   if (targeted !== undefined) return resolve(flag, targeted, EvaluationReason.TargetingMatch);
 
   const salt = flag.salt ?? flag.key;
@@ -150,7 +186,9 @@ function checkAllocation<T extends FlagValue>(
   const key = bucketingKeyFor(bucketBy, context);
   if (key === undefined) return bucketingKeyMissing(flag, bucketBy ?? 'targetingKey');
 
-  if (isAllocated(allocation, salt, key)) return undefined;
+  // `settledAllocation` is already answered above, so this draws directly
+  // rather than going through `isAllocated` and asking it a second time.
+  if (drawAllocation(allocation, salt, key)) return undefined;
   return resolve(flag, flag.defaultVariant, EvaluationReason.NotAllocated);
 }
 
@@ -300,8 +338,9 @@ function matchTarget(
   targetingKey: string | undefined,
   index: TargetIndex | undefined,
 ): string | undefined {
-  // An empty string is not an identity: it cannot be individually targeted.
-  if (targetingKey === undefined || targetingKey.length === 0) return undefined;
+  // Already resolved through `readTargetingKey`, which applies the one identity
+  // rule: an own property, a non-empty string, or nothing at all.
+  if (targetingKey === undefined) return undefined;
 
   // A snapshot has folded every flag's targets into one lookup, so the request
   // path is a single probe however many keys are listed.

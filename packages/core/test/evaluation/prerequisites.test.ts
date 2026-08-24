@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { evaluateFlag } from '../../src/index.js';
+import { createSharedMemo, evaluateFlag } from '../../src/index.js';
 import type { EvaluationEnvironment, FlagDefinition } from '../../src/index.js';
 
 const flag = (key: string, overrides: Partial<FlagDefinition> = {}): FlagDefinition => ({
@@ -209,5 +209,83 @@ describe('prerequisite graph cost', () => {
 
     expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
     expect(result.errorMessage).toContain('prerequisites deep');
+  });
+});
+
+describe('a memo shared across a bulk evaluation', () => {
+  // Counts how many times the shared dependency is actually looked at, by
+  // making `enabled` an accessor on the definition itself.
+  const countingBase = (): { definition: FlagDefinition; reads: () => number } => {
+    let reads = 0;
+    const definition = flag('base');
+    Object.defineProperty(definition, 'enabled', {
+      get: (): boolean => {
+        reads += 1;
+        return true;
+      },
+    });
+    return { definition, reads: (): number => reads };
+  };
+
+  it('evaluates a prerequisite shared by many flags once', () => {
+    const { definition: base, reads } = countingBase();
+    const dependents = ['a', 'b', 'c', 'd', 'e'].map((key) =>
+      flag(key, { prerequisites: [{ flag: 'base', variants: ['on'] }] }),
+    );
+    const environment = environmentOf(base, ...dependents);
+
+    const memo = createSharedMemo();
+    for (const dependent of dependents) {
+      expect(evaluateFlag(dependent, { targetingKey: 'u1' }, environment, memo).value).toBe(true);
+    }
+
+    // One read for the whole batch, not one per dependent.
+    expect(reads()).toBe(1);
+  });
+
+  it('evaluates it once per flag without a shared memo', () => {
+    const { definition: base, reads } = countingBase();
+    const dependents = ['a', 'b', 'c'].map((key) =>
+      flag(key, { prerequisites: [{ flag: 'base', variants: ['on'] }] }),
+    );
+    const environment = environmentOf(base, ...dependents);
+
+    for (const dependent of dependents) {
+      evaluateFlag(dependent, { targetingKey: 'u1' }, environment);
+    }
+
+    expect(reads()).toBe(3);
+  });
+
+  it('still catches a cycle: the chain is per-flag even when the memo is not', () => {
+    // Sharing the `visiting` set as well would make one flag's ancestry read as
+    // another flag's cycle — and mask a real one behind a memo hit.
+    const a = flag('a', { prerequisites: [{ flag: 'b', variants: ['on'] }] });
+    const b = flag('b', { prerequisites: [{ flag: 'a', variants: ['on'] }] });
+    const environment = environmentOf(a, b);
+    const memo = createSharedMemo();
+
+    for (const subject of [a, b]) {
+      expect(evaluateFlag(subject, { targetingKey: 'u1' }, environment, memo)).toMatchObject({
+        reason: 'ERROR',
+        errorCode: 'INVALID_DEFINITION',
+      });
+    }
+  });
+
+  it('gives the same answers with a shared memo as without one', () => {
+    const base = flag('base', { enabled: false });
+    const dependents = ['a', 'b'].map((key) =>
+      flag(key, { prerequisites: [{ flag: 'base', variants: ['on'] }] }),
+    );
+    const environment = environmentOf(base, ...dependents);
+    const memo = createSharedMemo();
+
+    for (const dependent of dependents) {
+      const shared = evaluateFlag(dependent, { targetingKey: 'u1' }, environment, memo);
+      const solo = evaluateFlag(dependent, { targetingKey: 'u1' }, environment);
+      expect(shared).toEqual(solo);
+      expect(shared.reason).toBe('PREREQUISITE_FAILED');
+    }
   });
 });

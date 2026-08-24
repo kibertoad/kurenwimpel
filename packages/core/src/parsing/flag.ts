@@ -20,21 +20,25 @@ import type {
 import type { FlagValue } from '../model/json.js';
 import { parseCondition } from './condition.js';
 import {
+  cloneJson,
   fail,
   isRecord,
-  optionalFiniteNumber,
   optionalString,
   requireFiniteNumber,
   requireString,
   requireStringArray,
 } from './primitives.js';
+import type { FlagParseIssue } from './primitives.js';
 
 /**
  * Validates one definition.
  *
+ * `warnings` collects the defects that do not cost the flag — see
+ * {@link tolerantVersion}. Omit it and they are simply dropped.
+ *
  * @throws {FlagParseError} when the shape is not a usable flag.
  */
-export function parseFlagDefinition(raw: unknown): FlagDefinition {
+export function parseFlagDefinition(raw: unknown, warnings?: FlagParseIssue[]): FlagDefinition {
   if (!isRecord(raw)) fail('flag must be an object');
 
   const key = requireString(raw['key'], 'key');
@@ -67,7 +71,7 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
   const metadata = parseMetadata(raw['metadata'], key);
 
   const salt = optionalString(raw['salt'], `flag ${key}: salt`);
-  const version = optionalFiniteNumber(raw['version'], `flag ${key}: version`);
+  const version = tolerantVersion(raw['version'], key, warnings);
 
   return {
     key,
@@ -84,6 +88,32 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
     ...(salt === undefined ? {} : { salt }),
     ...(version === undefined ? {} : { version }),
   };
+}
+
+/**
+ * The one field whose defects are reported without costing the flag.
+ *
+ * `version` is an analytics label: it reaches nothing but
+ * `ImpressionEvent.flagVersion`, and no evaluation path reads it. Rejecting the
+ * definition over it would answer FLAG_NOT_FOUND for every caller and send
+ * every SDK to its own hardcoded default — a total outage over a field that
+ * decides nothing. The reasoning in {@link optionalString} is the opposite way
+ * round for `salt`, `seed`, and `bucketBy`, where quietly dropping one
+ * reshuffles or reassigns a whole cohort.
+ */
+function tolerantVersion(
+  raw: unknown,
+  key: string,
+  warnings: FlagParseIssue[] | undefined,
+): number | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+
+  warnings?.push({
+    at: key,
+    message: `flag ${key}: version must be a finite number — ignored, the flag is still served`,
+  });
+  return undefined;
 }
 
 /**
@@ -114,9 +144,12 @@ function parseVariants(raw: unknown, key: string): Record<string, FlagValue> {
     }
   }
 
-  // Every value was checked against the FlagValue union just above.
+  // Copied, not returned as-is: the parsed flag must not alias the caller's
+  // JSON, or mutating the payload afterwards would change what a live snapshot
+  // serves. Object variant values are cloned too — a shallow copy would still
+  // share them. Every value was checked against the FlagValue union above.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  return raw as Record<string, FlagValue>;
+  return cloneJson(raw) as Record<string, FlagValue>;
 }
 
 function parsePrerequisites(raw: unknown, key: string): Prerequisite[] | undefined {
@@ -227,8 +260,13 @@ function parseRules(
 
     const where = `flag ${key}: rule ${id}`;
     const conditions = conditionsRaw.map((condition: unknown) => parseCondition(condition, where));
-    const rollout = parseRollout(entry['rollout'], where, variantNames);
-    const variantRaw = entry['variant'];
+    const rolloutRaw = entry['rollout'] ?? undefined;
+    const rollout = parseRollout(rolloutRaw, where, variantNames);
+
+    // An explicit `null` reads as absent, the rule every other optional field
+    // in the parser follows. A control plane that serialises a rollout-only
+    // rule's unset variant as null would otherwise lose the whole flag.
+    const variantRaw = entry['variant'] ?? undefined;
 
     if (variantRaw !== undefined) {
       const name = requireString(variantRaw, `${where} variant`);
@@ -238,7 +276,14 @@ function parseRules(
     }
 
     if (variantRaw === undefined && rollout === undefined) {
-      fail(`${where} must declare a variant or a rollout`);
+      // An empty rollout is not a missing one. Telling an operator who wrote
+      // `rollout: []` to "declare a variant or a rollout" sends them looking
+      // for a field that is already there.
+      fail(
+        rolloutRaw === undefined
+          ? `${where} must declare a variant or a rollout`
+          : `${where} declares an empty rollout and no variant`,
+      );
     }
 
     return {
@@ -250,7 +295,14 @@ function parseRules(
   });
 }
 
-/** Accepts both wire forms of a split: a bare bucket array, or a split object. */
+/**
+ * Accepts both wire forms of a split: a bare bucket array, or a split object.
+ *
+ * An empty split reads as "no rollout" in either form. The two used to disagree
+ * — the bare array parsed clean while the object rejected the whole flag — so a
+ * control plane emitting one shape got a live flag and the other an outage, for
+ * the same absence of buckets.
+ */
 function parseRollout(
   raw: unknown,
   where: string,
@@ -266,9 +318,8 @@ function parseRollout(
   if (!isRecord(raw)) fail(`${where}: rollout must be a bucket array or a split object`);
 
   const bucketsRaw = raw['buckets'];
-  if (!Array.isArray(bucketsRaw) || bucketsRaw.length === 0) {
-    fail(`${where}: rollout needs a non-empty buckets array`);
-  }
+  if (!Array.isArray(bucketsRaw)) fail(`${where}: rollout needs a buckets array`);
+  if (bucketsRaw.length === 0) return undefined;
 
   const buckets = parseBuckets(bucketsRaw, where, variantNames);
 
@@ -325,7 +376,9 @@ function parseMetadata(raw: unknown, key: string): FlagMetadata | undefined {
     }
   }
 
+  // Copied for the same reason as the variants: metadata travels out on every
+  // result, so a live snapshot must not hand back the caller's own object.
   // Every value was checked against the scalar union just above.
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  return raw as FlagMetadata;
+  return cloneJson(raw) as FlagMetadata;
 }

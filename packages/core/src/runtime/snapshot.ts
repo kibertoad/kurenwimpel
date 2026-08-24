@@ -38,11 +38,20 @@ export function createSnapshot(
   meta: SnapshotMeta = {},
   segments: Iterable<Segment | SegmentDefinition> = [],
 ): FlagSnapshot {
+  // First wins, on both sides, which is the rule `parseEach` already follows:
+  // which of two definitions of one key ends up live must not come down to
+  // input order. The two halves of the pipeline used to disagree — the parser
+  // kept the first and reported the rest, this kept the last — so a provider
+  // assembling flags from more than one source, a compiled-in bootstrap merged
+  // with a fetched ruleset, got the opposite answer from each.
   const flagsByKey = new Map<string, FlagDefinition>();
-  for (const flag of flags) flagsByKey.set(flag.key, flag);
+  for (const flag of flags) {
+    if (!flagsByKey.has(flag.key)) flagsByKey.set(flag.key, flag);
+  }
 
   const segmentsByKey = new Map<string, Segment>();
   for (const segment of segments) {
+    if (segmentsByKey.has(segment.key)) continue;
     segmentsByKey.set(segment.key, isCompiledSegment(segment) ? segment : compileSegment(segment));
   }
 

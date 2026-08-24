@@ -11,7 +11,14 @@
 
 import type { EvaluationErrorCode, EvaluationReason } from './result.js';
 
-/** The `reason` values OFREP 0.3.0 allows on a successful evaluation. */
+/**
+ * The `reason` values OFREP 0.3.0 allows on a successful evaluation.
+ *
+ * This is the protocol's vocabulary, not the set {@link toOfrepReason}
+ * produces: `UNKNOWN` is spelled here because the spec allows it, but no
+ * evaluation reason maps onto it — a serving layer with no reason to report at
+ * all is the only thing that would use it.
+ */
 export type OfrepReason = 'STATIC' | 'TARGETING_MATCH' | 'SPLIT' | 'DISABLED' | 'UNKNOWN';
 
 /**
@@ -56,6 +63,16 @@ export function toOfrepReason(reason: EvaluationReason): OfrepReason | undefined
       return 'DISABLED';
     }
     case 'ERROR': {
+      return undefined;
+    }
+    default: {
+      // Unreachable today, and a compile error the moment an EvaluationReason
+      // is added without a mapping. Without it a new reason would fall off the
+      // end and answer `undefined`, turning a perfectly successful evaluation
+      // into an OFREP evaluationFailure — the repo does not set
+      // `noImplicitReturns`, so nothing else would catch it. The sibling
+      // toOfrepErrorCode gets the same guarantee from its non-nullable return.
+      reason satisfies never;
       return undefined;
     }
   }

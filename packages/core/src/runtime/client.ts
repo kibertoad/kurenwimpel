@@ -1,4 +1,4 @@
-import { evaluateFlag } from '../evaluation/evaluate.js';
+import { createSharedMemo, evaluateFlag } from '../evaluation/evaluate.js';
 import type { EvaluationEnvironment } from '../evaluation/evaluate.js';
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
 import type { FlagDefinition, FlagMetadata } from '../model/flag.js';
@@ -269,8 +269,13 @@ export class FeatureFlagClient {
     const merged = this.#mergeContext(context);
     const results: EvaluationResult[] = [];
 
+    // One memo for the whole response. Every flag still walks its own chain,
+    // but a prerequisite shared by many of them — a kill switch above a whole
+    // feature tree — is evaluated once rather than once per dependent.
+    const memo = createSharedMemo();
+
     for (const flag of this.#snapshot.flags.values()) {
-      const result = evaluateFlag(flag, merged, this.#environment);
+      const result = evaluateFlag(flag, merged, this.#environment, memo);
       if (options?.impressions === true) this.#impress(result, merged, flag);
       results.push(result);
     }

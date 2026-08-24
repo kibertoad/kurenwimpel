@@ -68,27 +68,13 @@ export function bucketingKeyFor(
   bucketBy: string | undefined,
   context: EvaluationContext,
 ): string | undefined {
-  const raw = bucketBy === undefined ? context.targetingKey : readAttribute(context, bucketBy);
+  // Read through `readAttribute` whichever attribute it is: the identity a
+  // split hashes must not be the one attribute resolved off the prototype
+  // chain. See {@link readTargetingKey}.
+  const raw = readAttribute(context, bucketBy ?? 'targetingKey');
   if (typeof raw === 'string' && raw.length > 0) return raw;
   if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
   return undefined;
-}
-
-/**
- * Picks a variant from a weighted split.
- *
- * Weights are relative: `[{a, 1}, {b, 3}]` is a 25/75 split. Returns
- * `undefined` when the split carries no usable weight — all-zero, or a total
- * that overflows to Infinity (hand-built flags bypass the parser).
- */
-export function pickFromRollout(
-  buckets: readonly RolloutBucket[],
-  domain: readonly string[],
-  bucketingKey: string,
-): string | undefined {
-  const total = usableWeight(buckets);
-  if (total === undefined) return undefined;
-  return pickWeighted(buckets, domain, bucketingKey, total);
 }
 
 /**
@@ -114,12 +100,18 @@ function pickWeighted(
   const point = (bucketOf(domain, bucketingKey) / BUCKET_COUNT) * total;
 
   let cumulative = 0;
+  let last: string | undefined;
+
   for (const bucket of buckets) {
     if (bucket.weight <= 0) continue;
     cumulative += bucket.weight;
     if (point < cumulative) return bucket.variant;
+    last = bucket.variant;
   }
 
   // Only reachable through floating-point drift at the very top of the range.
-  return buckets.at(-1)?.variant;
+  // The fallback has to respect the same weight filter the loop just applied:
+  // the last bucket outright may be one parked at zero, and serving a variant
+  // an operator set to zero weight is the one thing they asked not to happen.
+  return last;
 }
