@@ -1,0 +1,13 @@
+packages:
+  - 'packages/*'
+
+# Keep a single copy of the toolchain across every workspace package.
+linkWorkspacePackages: deep
+saveWorkspaceProtocol: rolling
+dedupePeerDependents: true
+
+# pnpm blocks lifecycle scripts unless a dependency is allowed here.
+# Both of these download a prebuilt platform binary on install.
+allowBuilds:
+  esbuild: true
+  workerd: true

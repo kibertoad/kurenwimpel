@@ -1,0 +1,62 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "import", "promise", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "warn",
+    "style": "off"
+  },
+  "env": {
+    "es2024": true
+  },
+  "ignorePatterns": ["**/dist/**", "**/.turbo/**", "**/coverage/**"],
+  "rules": {
+    "typescript/consistent-type-imports": [
+      "error",
+      { "prefer": "type-imports", "fixStyle": "separate-type-imports" }
+    ],
+    "typescript/no-explicit-any": "error",
+    "typescript/explicit-module-boundary-types": "off",
+    "import/no-cycle": "error",
+    "import/extensions": ["error", "ignorePackages"],
+    "unicorn/no-null": "off",
+    // `export const X = {...} as const; export type X = ...` is the enum-free
+    // idiom this repo uses; TypeScript already rejects genuine redeclarations.
+    "no-redeclare": "off",
+    // Table-driven describe blocks and exhaustive switches are legitimately long.
+    "max-lines": "off",
+    "max-lines-per-function": "off",
+    // Restriction-tier and effectively repo-wide once any array or object is a
+    // parameter; the codebase marks its own public shapes readonly instead.
+    "typescript/prefer-readonly-parameter-types": "off",
+    // Contradicts switch-exhaustiveness-check (kept on): a switch that covers
+    // every member of a narrowed union needs no trailing return, and adding one
+    // would hide a genuinely missing case from the compiler.
+    "typescript/consistent-return": "off",
+    "unicorn/filename-case": ["error", { "case": "kebabCase" }],
+    "no-console": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/test/**"],
+      "rules": {
+        "typescript/no-explicit-any": "off",
+        "no-console": "off",
+        // Test doubles stub only the slice of an interface under test, which
+        // needs assertions the production code never does.
+        "typescript/no-unsafe-type-assertion": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/strict-void-return": "off"
+      }
+    },
+    {
+      "files": ["packages/node/**"],
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}

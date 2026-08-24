@@ -141,3 +141,11 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# --- kurenwimpel ---
+.turbo/
+*.tsbuildinfo
+.wrangler/
+.dev.vars
+.idea/
+.vscode/
