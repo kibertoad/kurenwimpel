@@ -1,8 +1,8 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/cloudflare" },
-    { "path": "./packages/node" }
+    { "path": "./packages/core/tsconfig.build.json" },
+    { "path": "./packages/cloudflare/tsconfig.build.json" },
+    { "path": "./packages/node/tsconfig.build.json" }
   ]
 }

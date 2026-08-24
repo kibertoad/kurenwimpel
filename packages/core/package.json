@@ -15,8 +15,8 @@
     }
   },
   "scripts": {
-    "build": "tsc --build",
-    "typecheck": "tsc -p tsconfig.test.json",
+    "build": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist *.tsbuildinfo"

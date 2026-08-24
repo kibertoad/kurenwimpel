@@ -32,6 +32,32 @@ pnpm run lint:fix
 `pnpm run lint` is type-aware and therefore slower; `pnpm run lint:quick` runs the
 syntax-only pass.
 
+Each package carries two TypeScript configs. `tsconfig.json` is the whole program
+— sources, tests, and config files — and is what editors and the type-aware linter
+discover. `tsconfig.build.json` narrows to `src/` and is the only one that emits.
+
+The linter enforces size budgets: 300 lines per file, 60 per function, 4
+parameters, 4 levels of nesting. Blank lines and comments do not count, so
+documenting a function never pushes it over. `describe` blocks are exempt from the
+per-function budget — they group tests rather than doing work — but test files are
+still held to the file-size limit.
+
+### Testing
+
+Core and Node tests run under Node. Cloudflare tests run **inside workerd** via
+`@cloudflare/vitest-pool-workers`, against the KV binding declared in
+`packages/cloudflare/wrangler.toml` — the provider is exercised against a real KV
+implementation rather than a stub. A guard assertion fails the suite if it ever
+falls back to a Node environment.
+
+`packages/cloudflare/worker-configuration.d.ts` holds the Workers runtime types and
+is generated, not written by hand. It is committed so a fresh clone typechecks
+without codegen. Regenerate it after editing `wrangler.toml`:
+
+```sh
+pnpm --filter @kurenwimpel/cloudflare run cf-typegen
+```
+
 ## Concepts
 
 A **flag** has named **variants** mapping to values. Which variant a caller gets is

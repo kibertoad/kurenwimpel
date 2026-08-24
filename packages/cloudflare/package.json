@@ -16,8 +16,9 @@
     }
   },
   "scripts": {
-    "build": "tsc --build",
-    "typecheck": "tsc -p tsconfig.test.json",
+    "build": "tsc --build tsconfig.build.json",
+    "cf-typegen": "wrangler types",
+    "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist *.tsbuildinfo"
@@ -26,7 +27,7 @@
     "@kurenwimpel/core": "workspace:*"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260823.1",
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.125.0"

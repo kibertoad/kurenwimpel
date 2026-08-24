@@ -1,0 +1,16 @@
+# Workers runtime configuration.
+#
+# @kurenwimpel/cloudflare is a library, not a deployed Worker, so there is no
+# `main` entrypoint here. This file exists so vitest-pool-workers can boot
+# workerd with the same bindings a consuming Worker would have — the tests
+# exercise the KV provider against a real KV implementation.
+#
+# Copy the `kv_namespaces` entry into your own Worker's config and point it at a
+# real namespace id.
+
+name = "kurenwimpel-cloudflare"
+compatibility_date = "2026-08-01"
+
+[[kv_namespaces]]
+binding = "FLAGS"
+id = "kurenwimpel_flags_test"

@@ -14,5 +14,5 @@
   "insertFinalNewline": true,
   "sortImports": true,
   "sortPackageJson": true,
-  "ignorePatterns": ["**/dist/**", "**/.turbo/**"]
+  "ignorePatterns": ["**/dist/**", "**/.turbo/**", "**/worker-configuration.d.ts"]
 }

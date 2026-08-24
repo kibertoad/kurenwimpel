@@ -11,7 +11,12 @@
   "env": {
     "es2024": true
   },
-  "ignorePatterns": ["**/dist/**", "**/.turbo/**", "**/coverage/**"],
+  "ignorePatterns": [
+    "**/dist/**",
+    "**/.turbo/**",
+    "**/coverage/**",
+    "**/worker-configuration.d.ts"
+  ],
   "rules": {
     "typescript/consistent-type-imports": [
       "error",
@@ -25,9 +30,16 @@
     // `export const X = {...} as const; export type X = ...` is the enum-free
     // idiom this repo uses; TypeScript already rejects genuine redeclarations.
     "no-redeclare": "off",
-    // Table-driven describe blocks and exhaustive switches are legitimately long.
-    "max-lines": "off",
-    "max-lines-per-function": "off",
+    // Size budgets. Blank lines and comments do not count toward them, so
+    // documenting a function is never what pushes it over.
+    "max-lines": ["error", { "max": 300, "skipBlankLines": true, "skipComments": true }],
+    "max-lines-per-function": [
+      "error",
+      { "max": 60, "skipBlankLines": true, "skipComments": true }
+    ],
+    "max-params": ["error", { "max": 4 }],
+    "max-depth": ["error", { "max": 4 }],
+    "max-nested-callbacks": ["error", { "max": 3 }],
     // Restriction-tier and effectively repo-wide once any array or object is a
     // parameter; the codebase marks its own public shapes readonly instead.
     "typescript/prefer-readonly-parameter-types": "off",
@@ -49,7 +61,11 @@
         "typescript/no-unsafe-type-assertion": "off",
         "typescript/no-unsafe-assignment": "off",
         "typescript/no-unsafe-argument": "off",
-        "typescript/strict-void-return": "off"
+        "typescript/strict-void-return": "off",
+        // A `describe` block is a grouping construct, not a unit of logic, so
+        // its line count measures nothing. File size (max-lines) and parameter
+        // counts stay enforced here.
+        "max-lines-per-function": "off"
       }
     },
     {

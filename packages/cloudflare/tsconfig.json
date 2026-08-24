@@ -1,11 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
-    "types": ["@cloudflare/workers-types"]
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["@cloudflare/vitest-pool-workers/types"]
   },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core" }]
+  // Workers runtime types come from `pnpm run cf-typegen`, which supersedes
+  // @cloudflare/workers-types and stays in sync with wrangler.toml.
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "worker-configuration.d.ts"]
 }
