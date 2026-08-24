@@ -3,37 +3,68 @@
  *
  * Nothing in this package touches a platform API. Service wrappers supply a
  * FlagProvider; everything else here is pure data and pure functions.
+ *
+ * The source is grouped by role:
+ * - `model/`      — the domain types: flags, segments, contexts, results.
+ * - `evaluation/` — the pure functions that decide what a context is served.
+ * - `parsing/`    — validation for definitions arriving as untrusted JSON.
+ * - `runtime/`    — snapshots, providers, and the client that ties them together.
  */
 
-export { FeatureFlagClient } from './client.js';
-export type { ClientErrorInfo, FeatureFlagClientOptions, ResolvedEvaluation } from './client.js';
-
-export {
-  evaluateFlag,
-  matchesCondition,
-  matchesRule,
-  pickFromRollout,
-  TARGETING_KEY_ATTRIBUTE,
-} from './evaluate.js';
-
-export { BUCKET_COUNT, bucketOf, murmurHash3 } from './hash.js';
-
-export { FlagParseError, parseFlagDefinition, parseFlagDefinitions } from './parse.js';
-export type { FlagParseIssue, ParseFlagsResult } from './parse.js';
-
-export { createSnapshot, EMPTY_SNAPSHOT, StaticProvider } from './snapshot.js';
-export type { FlagProvider, FlagSnapshot, SnapshotMeta } from './snapshot.js';
-
-export { EvaluationErrorCode, EvaluationReason } from './types.js';
+// model
+export type { AttributeValue, EvaluationContext } from './model/context.js';
 export type {
-  AttributeValue,
   Condition,
   ConditionOperator,
-  EvaluationContext,
-  EvaluationResult,
   FlagDefinition,
-  FlagValue,
-  JsonValue,
+  FlagMetadata,
+  Prerequisite,
+  Rollout,
   RolloutBucket,
+  RolloutSplit,
   TargetingRule,
-} from './types.js';
+  TrafficAllocation,
+  VariantTarget,
+} from './model/flag.js';
+export type { FlagValue, JsonObject, JsonValue } from './model/json.js';
+export { toOfrepErrorCode, toOfrepReason } from './model/ofrep.js';
+export type { OfrepErrorCode, OfrepReason } from './model/ofrep.js';
+export { EvaluationErrorCode, EvaluationReason } from './model/result.js';
+export type { EvaluationResult } from './model/result.js';
+export type { Segment, SegmentDefinition, SegmentRule } from './model/segment.js';
+
+// evaluation
+export { BUCKET_COUNT, bucketOf, isAllocated, murmurHash3 } from './evaluation/bucketing.js';
+export { isInSegment, matchesCondition, matchesConditions } from './evaluation/conditions.js';
+export type { SegmentMap } from './evaluation/conditions.js';
+export { evaluateFlag, pickFromRollout } from './evaluation/evaluate.js';
+export type { EvaluationEnvironment } from './evaluation/evaluate.js';
+export { compileSegment } from './evaluation/segments.js';
+export { compareVersions, parseVersion } from './evaluation/semver.js';
+export type { ParsedVersion } from './evaluation/semver.js';
+
+// parsing
+export { parseCondition } from './parsing/condition.js';
+export { parseFlagDefinition } from './parsing/flag.js';
+export { FlagParseError } from './parsing/primitives.js';
+export type { FlagParseIssue } from './parsing/primitives.js';
+export { parseFlagDefinitions, parseRuleset, parseSegmentDefinitions } from './parsing/ruleset.js';
+export type {
+  ParseFlagsResult,
+  ParseRulesetResult,
+  ParseSegmentsResult,
+} from './parsing/ruleset.js';
+export { parseSegmentDefinition } from './parsing/segment.js';
+
+// runtime
+export { FeatureFlagClient } from './runtime/client.js';
+export type {
+  ClientErrorInfo,
+  FeatureFlagClientOptions,
+  ImpressionEvent,
+  ResolvedEvaluation,
+} from './runtime/client.js';
+export { StaticProvider } from './runtime/provider.js';
+export type { FlagProvider, StaticProviderContents } from './runtime/provider.js';
+export { createSnapshot, EMPTY_SNAPSHOT } from './runtime/snapshot.js';
+export type { FlagSnapshot, SnapshotMeta } from './runtime/snapshot.js';

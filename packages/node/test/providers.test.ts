@@ -59,6 +59,22 @@ describe('FileFlagProvider', () => {
     expect(second?.flags.get('new-checkout')?.enabled).toBe(false);
   });
 
+  it('loads segments from the document form of the ruleset', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        flags: ruleset,
+        segments: [{ key: 'beta-testers', included: ['user-in'] }],
+      }),
+      'utf8',
+    );
+
+    const snapshot = await new FileFlagProvider({ path }).load();
+
+    expect(snapshot?.flags.size).toBe(1);
+    expect(snapshot?.segments.get('beta-testers')?.included.has('user-in')).toBe(true);
+  });
+
   it('reports invalid JSON with the offending path', async () => {
     await writeFile(path, '{ not json', 'utf8');
     await expect(new FileFlagProvider({ path }).load()).rejects.toThrow(/not valid JSON/u);
@@ -123,7 +139,14 @@ describe('HttpFlagProvider', () => {
       fetch: () => Promise.resolve(new Response(null, { status: 304 })),
     });
 
-    expect(await provider.load({ flags: new Map(), version: 'rev-1', fetchedAt: 0 })).toBeNull();
+    expect(
+      await provider.load({
+        flags: new Map(),
+        segments: new Map(),
+        version: 'rev-1',
+        fetchedAt: 0,
+      }),
+    ).toBeNull();
   });
 
   it('throws on a non-ok response', async () => {

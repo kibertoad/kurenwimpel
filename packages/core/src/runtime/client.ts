@@ -1,11 +1,37 @@
-import { evaluateFlag } from './evaluate.js';
-import { EMPTY_SNAPSHOT, type FlagProvider, type FlagSnapshot } from './snapshot.js';
-import type { EvaluationContext, EvaluationResult, FlagValue, JsonValue } from './types.js';
-import { EvaluationErrorCode, EvaluationReason } from './types.js';
+import { evaluateFlag } from '../evaluation/evaluate.js';
+import type { EvaluationEnvironment } from '../evaluation/evaluate.js';
+import type { AttributeValue, EvaluationContext } from '../model/context.js';
+import type { FlagMetadata } from '../model/flag.js';
+import type { FlagValue, JsonObject } from '../model/json.js';
+import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
+import type { EvaluationResult } from '../model/result.js';
+import type { FlagProvider } from './provider.js';
+import { EMPTY_SNAPSHOT } from './snapshot.js';
+import type { FlagSnapshot } from './snapshot.js';
 
 export interface ClientErrorInfo {
-  readonly operation: 'load' | 'close';
+  readonly operation: 'load' | 'close' | 'impression';
   readonly provider: string;
+}
+
+/**
+ * One evaluation, described for analytics: the exposure record an A/B test
+ * joins against its outcome metric. Emitted synchronously through
+ * `onImpression`; batching, sampling, and shipping are the consumer's job.
+ */
+export interface ImpressionEvent {
+  readonly flagKey: string;
+  readonly value: FlagValue | undefined;
+  readonly variant: string | undefined;
+  readonly reason: EvaluationReason;
+  readonly ruleId?: string;
+  readonly errorCode?: EvaluationErrorCode;
+  readonly targetingKey?: string;
+  /** The flag definition version, when the control plane stamps one. */
+  readonly flagVersion?: number;
+  readonly metadata?: FlagMetadata;
+  /** Epoch millis when the evaluation happened. */
+  readonly timestamp: number;
 }
 
 export interface FeatureFlagClientOptions {
@@ -20,6 +46,12 @@ export interface FeatureFlagClientOptions {
    * evaluation sites, because a stale snapshot beats a failed request.
    */
   readonly onError?: (error: Error, info: ClientErrorInfo) => void;
+  /**
+   * Called once per evaluation with the served outcome. This is the exposure
+   * feed for experiment analysis; a throwing hook is reported through
+   * `onError` and never fails the evaluation.
+   */
+  readonly onImpression?: (event: ImpressionEvent) => void;
 }
 
 /**
@@ -34,6 +66,7 @@ export class FeatureFlagClient {
   readonly #provider: FlagProvider;
   readonly #defaultContext: EvaluationContext;
   readonly #onError: ((error: Error, info: ClientErrorInfo) => void) | undefined;
+  readonly #onImpression: ((event: ImpressionEvent) => void) | undefined;
 
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
   #ready = false;
@@ -42,6 +75,7 @@ export class FeatureFlagClient {
     this.#provider = options.provider;
     this.#defaultContext = options.defaultContext ?? {};
     this.#onError = options.onError;
+    this.#onImpression = options.onImpression;
   }
 
   /** True once a snapshot has been loaded at least once. */
@@ -116,7 +150,7 @@ export class FeatureFlagClient {
     return this.getNumberDetails(key, defaultValue, context).value;
   }
 
-  getObject<T extends JsonValue>(key: string, defaultValue: T, context?: EvaluationContext): T {
+  getObject<T extends JsonObject>(key: string, defaultValue: T, context?: EvaluationContext): T {
     return this.getObjectDetails(key, defaultValue, context).value;
   }
 
@@ -150,18 +184,45 @@ export class FeatureFlagClient {
     });
   }
 
-  getObjectDetails<T extends JsonValue>(
+  getObjectDetails<T extends JsonObject>(
     key: string,
     defaultValue: T,
     context?: EvaluationContext,
   ): ResolvedEvaluation<T> {
     return this.#typed(key, defaultValue, context, (value): value is T => {
-      return typeof value === 'object' && value !== null;
+      // Hand-built definitions can bypass the parser, so the null and array
+      // exclusions are re-checked at runtime rather than trusted to the types.
+      return typeof value === 'object' && (value as unknown) !== null && !Array.isArray(value);
     });
   }
 
   /** Raw evaluation, without the type check that the typed getters apply. */
   evaluate(key: string, context?: EvaluationContext): EvaluationResult {
+    const merged = this.#mergeContext(context);
+    const result = this.#resolve(key, merged);
+    this.#impress(result, merged);
+    return result;
+  }
+
+  /**
+   * Evaluates every flag in the snapshot against one context — the shape the
+   * OFREP bulk route serves. Returns an empty array before the first load.
+   */
+  evaluateAll(context?: EvaluationContext): EvaluationResult[] {
+    const merged = this.#mergeContext(context);
+    const environment = this.#environment();
+    const results: EvaluationResult[] = [];
+
+    for (const flag of this.#snapshot.flags.values()) {
+      const result = evaluateFlag(flag, merged, environment);
+      this.#impress(result, merged);
+      results.push(result);
+    }
+
+    return results;
+  }
+
+  #resolve(key: string, context: EvaluationContext): EvaluationResult {
     if (!this.#ready) {
       return {
         key,
@@ -186,7 +247,11 @@ export class FeatureFlagClient {
       };
     }
 
-    return evaluateFlag(flag, this.#mergeContext(context));
+    return evaluateFlag(flag, context, this.#environment());
+  }
+
+  #environment(): EvaluationEnvironment {
+    return { flags: this.#snapshot.flags, segments: this.#snapshot.segments };
   }
 
   #typed<T extends FlagValue>(
@@ -195,39 +260,68 @@ export class FeatureFlagClient {
     context: EvaluationContext | undefined,
     isExpectedType: (value: FlagValue) => value is T,
   ): ResolvedEvaluation<T> {
-    const result = this.evaluate(key, context);
+    const merged = this.#mergeContext(context);
+    const result = this.#resolve(key, merged);
+    const final = this.#coerce(result, defaultValue, isExpectedType);
+    this.#impress(final, merged);
+    return final;
+  }
 
+  #coerce<T extends FlagValue>(
+    result: EvaluationResult,
+    defaultValue: T,
+    isExpectedType: (value: FlagValue) => value is T,
+  ): ResolvedEvaluation<T> {
     if (result.value === undefined) {
       return { ...result, value: defaultValue };
     }
 
     if (!isExpectedType(result.value)) {
       return {
-        key,
+        key: result.key,
         value: defaultValue,
         variant: result.variant,
         reason: EvaluationReason.Error,
         errorCode: EvaluationErrorCode.TypeMismatch,
-        errorMessage: `Flag "${key}" resolved to ${typeof result.value}, which is not the requested type`,
+        errorMessage: `Flag "${result.key}" resolved to ${typeof result.value}, which is not the requested type`,
       };
     }
 
     return { ...result, value: result.value };
   }
 
+  #impress(result: EvaluationResult, context: EvaluationContext): void {
+    if (this.#onImpression === undefined) return;
+
+    const flagVersion = this.#snapshot.flags.get(result.key)?.version;
+
+    try {
+      this.#onImpression({
+        flagKey: result.key,
+        value: result.value,
+        variant: result.variant,
+        reason: result.reason,
+        ...(result.ruleId === undefined ? {} : { ruleId: result.ruleId }),
+        ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
+        ...(context.targetingKey === undefined ? {} : { targetingKey: context.targetingKey }),
+        ...(flagVersion === undefined ? {} : { flagVersion }),
+        ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      this.#report(error, 'impression');
+    }
+  }
+
   #mergeContext(context: EvaluationContext | undefined): EvaluationContext {
     if (context === undefined) return this.#defaultContext;
 
-    const targetingKey = context.targetingKey ?? this.#defaultContext.targetingKey;
-    const defaults = this.#defaultContext.attributes;
+    const merged: Record<string, AttributeValue | undefined> = { ...this.#defaultContext };
+    for (const [attribute, value] of Object.entries(context)) {
+      if (value !== undefined) merged[attribute] = value;
+    }
 
-    const attributes =
-      defaults === undefined ? context.attributes : { ...defaults, ...context.attributes };
-
-    return {
-      ...(targetingKey === undefined ? {} : { targetingKey }),
-      ...(attributes === undefined ? {} : { attributes }),
-    };
+    return merged;
   }
 
   #report(error: unknown, operation: ClientErrorInfo['operation']): void {

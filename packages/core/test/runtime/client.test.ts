@@ -1,13 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createSnapshot,
-  FeatureFlagClient,
-  StaticProvider,
-  type FlagDefinition,
-  type FlagProvider,
-  type FlagSnapshot,
-} from '../src/index.js';
+import { createSnapshot, FeatureFlagClient, StaticProvider } from '../../src/index.js';
+import type { FlagDefinition, FlagProvider, FlagSnapshot } from '../../src/index.js';
 
 const flags: FlagDefinition[] = [
   {
@@ -33,10 +27,8 @@ const flags: FlagDefinition[] = [
   },
 ];
 
-async function makeClient(overrides?: Partial<FlagDefinition>[]): Promise<FeatureFlagClient> {
-  const definitions =
-    overrides === undefined ? flags : [...flags, ...(overrides as FlagDefinition[])];
-  const client = new FeatureFlagClient({ provider: new StaticProvider(definitions) });
+async function makeClient(extra: FlagDefinition[] = []): Promise<FeatureFlagClient> {
+  const client = new FeatureFlagClient({ provider: new StaticProvider([...flags, ...extra]) });
   await client.init();
   return client;
 }
@@ -89,7 +81,7 @@ describe('FeatureFlagClient', () => {
     expect(client.getNumberDetails('broken-number', 5).errorCode).toBe('TYPE_MISMATCH');
   });
 
-  it('merges default context under the per-call context', async () => {
+  it('merges the default context under the per-call context, flat', async () => {
     const provider = new StaticProvider([
       {
         key: 'regional',
@@ -110,17 +102,13 @@ describe('FeatureFlagClient', () => {
       },
     ]);
 
-    const client = new FeatureFlagClient({
-      provider,
-      defaultContext: { attributes: { region: 'eu' } },
-    });
+    const client = new FeatureFlagClient({ provider, defaultContext: { region: 'eu' } });
     await client.init();
 
-    expect(client.getBoolean('regional', false, { attributes: { plan: 'pro' } })).toBe(true);
-    // Per-call attributes win over the defaults.
-    expect(
-      client.getBoolean('regional', false, { attributes: { plan: 'pro', region: 'us' } }),
-    ).toBe(false);
+    expect(client.getBoolean('regional', false, { plan: 'pro' })).toBe(true);
+    // Per-call attributes win over the defaults; explicit undefined does not clobber.
+    expect(client.getBoolean('regional', false, { plan: 'pro', region: 'us' })).toBe(false);
+    expect(client.getBoolean('regional', false, { plan: 'pro', region: undefined })).toBe(true);
   });
 
   it('applies the default context when no per-call context is given', async () => {
@@ -141,11 +129,54 @@ describe('FeatureFlagClient', () => {
           ],
         },
       ]),
-      defaultContext: { attributes: { service: 'billing' } },
+      defaultContext: { service: 'billing' },
     });
     await client.init();
 
     expect(client.getBoolean('staff', false)).toBe(true);
+  });
+
+  it('resolves segment conditions against the snapshot segments', async () => {
+    const provider = new StaticProvider(
+      [
+        {
+          key: 'beta-feature',
+          enabled: true,
+          variants: { on: true, off: false },
+          defaultVariant: 'off',
+          offVariant: 'off',
+          rules: [
+            {
+              id: 'beta',
+              conditions: [{ operator: 'inSegment', segments: ['beta-testers'] }],
+              variant: 'on',
+            },
+          ],
+        },
+      ],
+      { segments: [{ key: 'beta-testers', included: ['user-in'] }] },
+    );
+
+    const client = new FeatureFlagClient({ provider });
+    await client.init();
+
+    expect(client.getBoolean('beta-feature', false, { targetingKey: 'user-in' })).toBe(true);
+    expect(client.getBoolean('beta-feature', false, { targetingKey: 'user-out' })).toBe(false);
+  });
+
+  it('resolves prerequisites against the snapshot flags', async () => {
+    const client = await makeClient([
+      {
+        key: 'dependent',
+        enabled: true,
+        variants: { on: true, off: false },
+        defaultVariant: 'on',
+        offVariant: 'off',
+        prerequisites: [{ flag: 'greeting', variants: ['casual'] }],
+      },
+    ]);
+
+    expect(client.getBooleanDetails('dependent', false).reason).toBe('STATIC');
   });
 
   it('installs a new snapshot on refresh', async () => {

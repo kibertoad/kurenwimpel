@@ -7,6 +7,8 @@
  * unavailable or async somewhere we want to run.
  */
 
+import type { TrafficAllocation } from '../model/flag.js';
+
 // Declared locally rather than pulled in from lib.dom or @types/node: core must
 // not commit consumers to a platform's global type surface. TextEncoder is
 // WHATWG Encoding, present in Node, browsers, Workers, Deno, and Bun alike.
@@ -75,10 +77,33 @@ export const BUCKET_COUNT = 10_000;
 /**
  * Maps a subject to a stable bucket in `[0, BUCKET_COUNT)`.
  *
- * The salt separates independent rollouts: the same user gets an uncorrelated
+ * The salt separates independent draws: the same user gets an uncorrelated
  * bucket per flag, so being in the unlucky tail of one experiment does not put
  * them in the tail of every other.
  */
-export function bucketOf(salt: string, targetingKey: string): number {
-  return murmurHash3(`${salt}:${targetingKey}`) % BUCKET_COUNT;
+export function bucketOf(salt: string, bucketingKey: string): number {
+  return murmurHash3(`${salt}:${bucketingKey}`) % BUCKET_COUNT;
+}
+
+/**
+ * The traffic-allocation gate: is this subject inside the flag's exposed slice?
+ *
+ * The hash domain is `<salt>!allocation`, distinct by construction from every
+ * variant-assignment domain (`<salt>`, `<salt>:<ruleId>`, and their seeded
+ * forms). That decorrelation is the point: widening the allocation admits new
+ * subjects while everyone already admitted keeps the treatment they had,
+ * because admission and assignment are independent draws.
+ */
+export function isAllocated(
+  allocation: TrafficAllocation,
+  salt: string,
+  targetingKey: string,
+): boolean {
+  if (allocation.percent >= 100) return true;
+  if (allocation.percent <= 0) return false;
+
+  const domain =
+    allocation.seed === undefined ? `${salt}!allocation` : `${salt}!allocation:${allocation.seed}`;
+
+  return bucketOf(domain, targetingKey) < (allocation.percent / 100) * BUCKET_COUNT;
 }

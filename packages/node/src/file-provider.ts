@@ -2,14 +2,14 @@ import { readFile, stat } from 'node:fs/promises';
 
 import {
   createSnapshot,
-  parseFlagDefinitions,
+  parseRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
 } from '@kurenwimpel/core';
 
 export interface FileProviderOptions {
-  /** Path to a JSON file holding an array or key-to-definition object. */
+  /** Path to a JSON file holding flag definitions, or a `{ flags, segments }` document. */
   readonly path: string;
   /** Called for definitions that failed validation; the rest still load. */
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
@@ -48,9 +48,9 @@ export class FileFlagProvider implements FlagProvider {
       throw new Error(`Flag file ${this.#path} is not valid JSON`, { cause: error });
     }
 
-    const { flags, issues } = parseFlagDefinitions(raw);
+    const { flags, segments, issues } = parseRuleset(raw);
     if (issues.length > 0) this.#onParseIssues?.(issues);
 
-    return createSnapshot(flags, { version });
+    return createSnapshot(flags, { version }, segments);
   }
 }

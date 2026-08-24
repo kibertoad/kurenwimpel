@@ -1,6 +1,6 @@
 import {
   createSnapshot,
-  parseFlagDefinitions,
+  parseRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
@@ -59,11 +59,11 @@ export class HttpFlagProvider implements FlagProvider {
     }
 
     const raw: unknown = await response.json();
-    const { flags, issues } = parseFlagDefinitions(raw);
+    const { flags, segments, issues } = parseRuleset(raw);
     if (issues.length > 0) this.#onParseIssues?.(issues);
 
     const etag = response.headers.get('etag');
 
-    return createSnapshot(flags, etag === null ? {} : { version: etag });
+    return createSnapshot(flags, etag === null ? {} : { version: etag }, segments);
   }
 }
