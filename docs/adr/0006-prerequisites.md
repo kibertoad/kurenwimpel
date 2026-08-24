@@ -47,8 +47,20 @@ dependency that cannot be checked is a dependency that does not hold.
 chain; re-entering a flag yields `ERROR` / `INVALID_DEFINITION` with the cycle
 named, propagated up the chain undisguised (an ordinary
 `PREREQUISITE_FAILED` would let a broken graph masquerade as a working gate).
-The parser additionally rejects the trivial self-cycle. Depth needs no
-separate cap: the chain is bounded by the number of flags in the snapshot.
+The parser additionally rejects the trivial self-cycle, and the same
+dependency named twice by one flag.
+
+**The walk memoises, and is capped.** The visiting chain is bounded by the
+flag count, but the _paths_ through the graph are not: two flags sharing a
+dependency evaluate it twice, and a chain where that repeats at every level
+costs 2^depth walks — enough for a control plane to turn one lookup into
+seconds of CPU on a path documented as synchronous and total. So a dependency
+is evaluated at most once per request, its result reused for every other path
+that reaches it (the context is fixed for the whole walk, and a cycle
+reachable through a memoised subtree is still detected on the first traversal
+of it). A depth cap of 50 backs that up, since recursion can exhaust the
+stack before a memo helps; beyond it the graph is reported as an invalid
+definition.
 
 ## Consequences
 

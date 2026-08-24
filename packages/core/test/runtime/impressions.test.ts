@@ -118,16 +118,30 @@ describe('evaluateAll', () => {
     expect(results.every((result) => result.value !== undefined)).toBe(true);
   });
 
-  it('returns an empty array before the first load', () => {
+  it('refuses to answer before the first load instead of reporting no flags', () => {
+    // A bulk body has no per-flag slot for PROVIDER_NOT_READY, and an empty
+    // array reads exactly like a healthy empty ruleset — the caller has to be
+    // able to turn this into a 5xx rather than a 200 with nothing in it.
     const client = new FeatureFlagClient({ provider: new StaticProvider([toggle]) });
-    expect(client.evaluateAll({ targetingKey: 'user-1' })).toEqual([]);
+
+    expect(() => client.evaluateAll({ targetingKey: 'user-1' })).toThrow(/has not loaded flags/u);
+    expect(client.ready).toBe(false);
   });
 
-  it('emits one impression per flag', async () => {
+  it('emits no impressions by default: a bulk fetch is not an exposure', async () => {
     const seen: ImpressionEvent[] = [];
     const client = await makeClient((event) => seen.push(event));
 
     client.evaluateAll({ targetingKey: 'user-1' });
+
+    expect(seen).toEqual([]);
+  });
+
+  it('emits one impression per flag when the caller asks for them', async () => {
+    const seen: ImpressionEvent[] = [];
+    const client = await makeClient((event) => seen.push(event));
+
+    client.evaluateAll({ targetingKey: 'user-1' }, { impressions: true });
 
     expect(seen.map((event) => event.flagKey).toSorted()).toEqual([
       'checkout-experiment',

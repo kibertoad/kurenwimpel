@@ -228,3 +228,56 @@ describe('parseFlagDefinition', () => {
     );
   });
 });
+
+describe('parseFlagDefinition — identity and cohort knobs', () => {
+  it('rejects two rules sharing an id', () => {
+    // The id is the rule's bucketing domain: two rules holding the same one
+    // draw the same subjects into both ramps instead of independent ones.
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rules: [
+          { id: 'ramp', conditions: [], rollout: [{ variant: 'on', weight: 10 }] },
+          { id: 'ramp', conditions: [], rollout: [{ variant: 'off', weight: 10 }] },
+        ],
+      }),
+    ).toThrow(/appears more than once/u);
+  });
+
+  it('rejects a prerequisite named twice', () => {
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        prerequisites: [
+          { flag: 'new-backend', variants: ['on'] },
+          { flag: 'new-backend', variants: ['off'] },
+        ],
+      }),
+    ).toThrow(/appears more than once/u);
+  });
+
+  it('parses an allocation bucketed on an attribute', () => {
+    const parsed = parseFlagDefinition({
+      ...valid,
+      allocation: { percent: 20, bucketBy: 'accountId' },
+    });
+
+    expect(parsed.allocation).toEqual({ percent: 20, bucketBy: 'accountId' });
+    expect(() =>
+      parseFlagDefinition({ ...valid, allocation: { percent: 20, bucketBy: '' } }),
+    ).toThrow(/allocation bucketBy/u);
+  });
+
+  it('rejects an empty seed everywhere one can be written', () => {
+    // An empty seed is a config slip, and it would still feed the hash domain.
+    expect(() => parseFlagDefinition({ ...valid, allocation: { percent: 10, seed: '' } })).toThrow(
+      /allocation seed/u,
+    );
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rollout: { seed: '', buckets: [{ variant: 'on', weight: 100 }] },
+      }),
+    ).toThrow(/rollout seed/u);
+  });
+});

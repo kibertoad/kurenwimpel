@@ -53,7 +53,11 @@ and a filter is one line in the hook. The core cannot buffer or flush anyway
   with knobs.
 
 `evaluateAll(context)` rounds this out for the OFREP bulk route: every flag,
-one context, one impression each.
+one context. It emits **no** impressions unless asked (`{ impressions: true }`)
+— a bulk fetch is a prefetch, not an exposure, and one event per flag would
+make every experiment's exposed population "everyone who loaded the page",
+which is exactly the join this feed exists to support. The typed getters are
+the exposure points.
 
 ## Consequences
 

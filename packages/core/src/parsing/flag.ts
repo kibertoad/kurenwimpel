@@ -22,6 +22,8 @@ import { parseCondition } from './condition.js';
 import {
   fail,
   isRecord,
+  optionalFiniteNumber,
+  optionalString,
   requireFiniteNumber,
   requireString,
   requireStringArray,
@@ -61,20 +63,8 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
   const rollout = parseRollout(raw['rollout'], `flag ${key}`, variantNames);
   const metadata = parseMetadata(raw['metadata'], key);
 
-  // A malformed salt or version must reject the flag, not be silently
-  // dropped — losing a salt reshuffles every split of the flag.
-  const salt = raw['salt'];
-  if (salt !== undefined && salt !== null && (typeof salt !== 'string' || salt.length === 0)) {
-    fail(`flag ${key}: salt must be a non-empty string`);
-  }
-  const version = raw['version'];
-  if (
-    version !== undefined &&
-    version !== null &&
-    (typeof version !== 'number' || !Number.isFinite(version))
-  ) {
-    fail(`flag ${key}: version must be a finite number`);
-  }
+  const salt = optionalString(raw['salt'], `flag ${key}: salt`);
+  const version = optionalFiniteNumber(raw['version'], `flag ${key}: version`);
 
   return {
     key,
@@ -88,8 +78,8 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
     ...(rules === undefined ? {} : { rules }),
     ...(rollout === undefined ? {} : { rollout }),
     ...(metadata === undefined ? {} : { metadata }),
-    ...(typeof salt === 'string' ? { salt } : {}),
-    ...(typeof version === 'number' ? { version } : {}),
+    ...(salt === undefined ? {} : { salt }),
+    ...(version === undefined ? {} : { version }),
   };
 }
 
@@ -130,11 +120,18 @@ function parsePrerequisites(raw: unknown, key: string): Prerequisite[] | undefin
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) fail(`flag ${key}: prerequisites must be an array`);
 
+  const seen = new Set<string>();
+
   return raw.map((entry: unknown, index: number): Prerequisite => {
     if (!isRecord(entry)) fail(`flag ${key}: prerequisite ${index} must be an object`);
 
     const flag = requireString(entry['flag'], `flag ${key}: prerequisite ${index} flag`);
     if (flag === key) fail(`flag ${key}: cannot be its own prerequisite`);
+
+    // A repeated edge is at best redundant and at worst two disagreeing variant
+    // lists. It also multiplies the graph walk, so the gate is cheap to keep.
+    if (seen.has(flag)) fail(`flag ${key}: prerequisite ${flag} appears more than once`);
+    seen.add(flag);
 
     const variants = requireStringArray(
       entry['variants'],
@@ -187,11 +184,16 @@ function parseAllocation(raw: unknown, key: string): TrafficAllocation | undefin
     fail(`flag ${key}: allocation percent must be between 0 and 100`);
   }
 
-  const seed = raw['seed'];
-  if (seed !== undefined && seed !== null && typeof seed !== 'string') {
-    fail(`flag ${key}: allocation seed must be a string`);
-  }
-  return { percent, ...(typeof seed === 'string' ? { seed } : {}) };
+  // Bucketing the gate on an attribute keeps a cohort admitted or excluded
+  // together; by default one identity, the targeting key, decides.
+  const bucketBy = optionalString(raw['bucketBy'], `flag ${key}: allocation bucketBy`);
+  const seed = optionalString(raw['seed'], `flag ${key}: allocation seed`);
+
+  return {
+    percent,
+    ...(bucketBy === undefined ? {} : { bucketBy }),
+    ...(seed === undefined ? {} : { seed }),
+  };
 }
 
 function parseRules(
@@ -202,10 +204,19 @@ function parseRules(
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) fail(`flag ${key}: rules must be an array`);
 
+  const seen = new Set<string>();
+
   return raw.map((entry: unknown, index: number): TargetingRule => {
     if (!isRecord(entry)) fail(`flag ${key}: rule ${index} must be an object`);
 
     const id = requireString(entry['id'], `flag ${key}: rule ${index} id`);
+
+    // The id is the only thing separating two rules' bucketing domains (ADR
+    // 0002), so two rules sharing one draw the same subjects into both ramps:
+    // two experiments on the flag would be perfectly correlated.
+    if (seen.has(id)) fail(`flag ${key}: rule id ${id} appears more than once`);
+    seen.add(id);
+
     const conditionsRaw = entry['conditions'];
     if (!Array.isArray(conditionsRaw)) {
       fail(`flag ${key}: rule ${id} needs a conditions array`);
@@ -258,25 +269,13 @@ function parseRollout(
 
   const buckets = parseBuckets(bucketsRaw, where, variantNames);
 
-  // Malformed knobs reject the flag like every other field: silently dropping
-  // a bucketBy or seed would quietly reassign the whole cohort.
-  const bucketBy = raw['bucketBy'];
-  if (
-    bucketBy !== undefined &&
-    bucketBy !== null &&
-    (typeof bucketBy !== 'string' || bucketBy.length === 0)
-  ) {
-    fail(`${where}: rollout bucketBy must be a non-empty string`);
-  }
-  const seed = raw['seed'];
-  if (seed !== undefined && seed !== null && typeof seed !== 'string') {
-    fail(`${where}: rollout seed must be a string`);
-  }
+  const bucketBy = optionalString(raw['bucketBy'], `${where}: rollout bucketBy`);
+  const seed = optionalString(raw['seed'], `${where}: rollout seed`);
 
   return {
     buckets,
-    ...(typeof bucketBy === 'string' ? { bucketBy } : {}),
-    ...(typeof seed === 'string' ? { seed } : {}),
+    ...(bucketBy === undefined ? {} : { bucketBy }),
+    ...(seed === undefined ? {} : { seed }),
   };
 }
 

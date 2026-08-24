@@ -31,10 +31,12 @@ without a targeting key, since they match on attributes.
 **Compiled once, matched in O(1).** The wire form carries key lists as JSON
 arrays; `compileSegment` turns them into `ReadonlySet`s when the snapshot is
 built. A 100 000-key segment costs one set build per refresh and a hash probe
-per evaluation. This is also the answer to "my `in` list is huge": flag-level
-target and condition lists are linear scans meant for tens of keys; big lists
-belong in segments. (Same guidance LaunchDarkly gives — big lists go in
-segments, not targets.)
+per evaluation. Individual targets earn the same treatment for the same reason
+(`compileTargets`, one key-to-variant map per flag), so the answer to "my list
+is huge" is about reuse rather than cost: a `notIn` condition list is still a
+linear scan meant for tens of values, and an audience wanted by more than one
+flag belongs in a segment either way. (Same guidance LaunchDarkly gives — big
+lists go in segments, not targets.)
 
 **No nesting.** Segment rules may not use the segment operators; the parser
 rejects them, and a hand-built one fails closed in the matcher. Membership

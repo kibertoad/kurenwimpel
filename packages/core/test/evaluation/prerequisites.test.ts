@@ -142,3 +142,51 @@ describe('prerequisites', () => {
     );
   });
 });
+
+describe('prerequisite graph cost', () => {
+  /** Counts the lookups a walk makes, which is what runs away when it re-walks. */
+  class CountingFlags extends Map<string, FlagDefinition> {
+    lookups = 0;
+
+    override get(key: string): FlagDefinition | undefined {
+      this.lookups += 1;
+      return super.get(key);
+    }
+  }
+
+  const chain = (depth: number, edgesPerLevel: number): FlagDefinition[] =>
+    Array.from({ length: depth }, (_, index) =>
+      flag(
+        `f${index}`,
+        index === depth - 1
+          ? {}
+          : {
+              prerequisites: Array.from({ length: edgesPerLevel }, () => ({
+                flag: `f${index + 1}`,
+                variants: ['on'],
+              })),
+            },
+      ),
+    );
+
+  it('evaluates each dependency once per request, not once per path to it', () => {
+    // Every level naming the next one twice is a diamond at every level: one
+    // evaluation per flag is linear, one per path is 2^depth. The parser
+    // rejects the duplicate edge now, but a hand-built graph can still ask.
+    const flags = new CountingFlags(chain(25, 2).map((definition) => [definition.key, definition]));
+    const root = flags.get('f0')!;
+    flags.lookups = 0;
+
+    expect(evaluateFlag(root, {}, { flags }).reason).toBe('STATIC');
+    // Two edges per level, each a lookup; everything past the first is a memo hit.
+    expect(flags.lookups).toBeLessThan(100);
+  });
+
+  it('calls a graph deeper than the walk allows an invalid definition', () => {
+    const flags = new Map(chain(60, 1).map((definition) => [definition.key, definition]));
+    const result = evaluateFlag(flags.get('f0')!, {}, { flags });
+
+    expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
+    expect(result.errorMessage).toContain('prerequisites deep');
+  });
+});

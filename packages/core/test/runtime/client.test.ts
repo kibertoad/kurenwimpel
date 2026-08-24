@@ -111,9 +111,11 @@ describe('FeatureFlagClient', () => {
     await client.init();
 
     expect(client.getBoolean('regional', false, { plan: 'pro' })).toBe(true);
-    // Per-call attributes win over the defaults; explicit undefined does not clobber.
+    // Per-call attributes win over the defaults.
     expect(client.getBoolean('regional', false, { plan: 'pro', region: 'us' })).toBe(false);
-    expect(client.getBoolean('regional', false, { plan: 'pro', region: undefined })).toBe(true);
+    // Naming an attribute as undefined clears the default for this one call —
+    // the only way to say "this request has no region". Leaving it out inherits.
+    expect(client.getBoolean('regional', false, { plan: 'pro', region: undefined })).toBe(false);
   });
 
   it('keeps an own __proto__ key in a JSON-parsed context out of targeting', async () => {
@@ -279,6 +281,17 @@ describe('FeatureFlagClient', () => {
     await expect(new FeatureFlagClient({ provider: broken }).init()).rejects.toThrow(
       'control plane unreachable',
     );
+  });
+
+  it('rejects from init when the provider has no ruleset to hand over', async () => {
+    // A 304 to the very first request, a proxy answering from a stale
+    // validator: "unchanged" against nothing is not a snapshot. Coming up ready
+    // on the empty one would serve every request on caller fallbacks, silently.
+    const empty: FlagProvider = { name: 'empty', load: () => Promise.resolve(null) };
+    const client = new FeatureFlagClient({ provider: empty });
+
+    await expect(client.init()).rejects.toThrow(/no change on the first load/u);
+    expect(client.ready).toBe(false);
   });
 
   it('swallows refresh failures, reports them, and serves the stale snapshot', async () => {

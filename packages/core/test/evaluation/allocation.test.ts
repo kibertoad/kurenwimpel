@@ -122,3 +122,43 @@ describe('traffic allocation', () => {
     expect(onShare).toBeLessThan(0.55);
   });
 });
+
+describe('allocation bucketed on an attribute', () => {
+  const buckets = [
+    { variant: 'on', weight: 50 },
+    { variant: 'off', weight: 50 },
+  ];
+  const cohort = users(20).map((key) => ({ targetingKey: key, accountId: 'acme' }));
+  const reasonsFor = (flag: FlagDefinition<boolean>): Set<string> =>
+    new Set(cohort.map((context) => evaluateFlag(flag, context).reason));
+
+  it('admits or excludes a whole cohort, where the default gate splits it', () => {
+    // The gate hashes the targeting key by default, so an account can be half
+    // admitted even when assignment clusters it — pointing both knobs at the
+    // same attribute is how an operator gets the whole-account flip.
+    const perUser: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      allocation: { percent: 50 },
+      rollout: { bucketBy: 'accountId', buckets },
+    };
+    const perAccount: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      allocation: { percent: 50, bucketBy: 'accountId' },
+      rollout: { bucketBy: 'accountId', buckets },
+    };
+
+    expect(reasonsFor(perUser).size).toBeGreaterThan(1);
+    expect(reasonsFor(perAccount).size).toBe(1);
+  });
+
+  it('names the attribute it needed when the cohort key is absent', () => {
+    const flag: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      allocation: { percent: 50, bucketBy: 'accountId' },
+    };
+
+    const result = evaluateFlag(flag, { targetingKey: 'alice' });
+    expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'TARGETING_KEY_MISSING' });
+    expect(result.errorMessage).toContain('accountId');
+  });
+});

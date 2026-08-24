@@ -109,7 +109,7 @@ export function bucketOf(domain: readonly string[], bucketingKey: string): numbe
 export function isAllocated(
   allocation: TrafficAllocation,
   salt: string,
-  targetingKey: string,
+  bucketingKey: string,
 ): boolean {
   if (allocation.percent >= 100) return true;
   if (allocation.percent <= 0) return false;
@@ -120,5 +120,5 @@ export function isAllocated(
   // percent has 0.01 granularity, so the threshold is an exact bucket count;
   // rounding keeps float drift from admitting one extra bucket (0.07 / 100 *
   // 10 000 is 7.000000000000001).
-  return bucketOf(domain, targetingKey) < Math.round((allocation.percent / 100) * BUCKET_COUNT);
+  return bucketOf(domain, bucketingKey) < Math.round((allocation.percent / 100) * BUCKET_COUNT);
 }

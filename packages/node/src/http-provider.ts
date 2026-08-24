@@ -45,14 +45,24 @@ export class HttpFlagProvider implements FlagProvider {
 
   async load(previous?: FlagSnapshot): Promise<FlagSnapshot | null> {
     const headers: Record<string, string> = { accept: 'application/json', ...this.#headers };
-    if (previous?.version !== undefined) headers['if-none-match'] = previous.version;
+    const validator = previous?.version;
+    if (validator !== undefined) headers['if-none-match'] = validator;
 
     const response = await this.#fetch(this.#url, {
       headers,
       signal: AbortSignal.timeout(this.#timeoutMs),
     });
 
-    if (response.status === 304) return null;
+    if (response.status === 304) {
+      // "Unchanged" is only an answer to a question we asked. A 304 to an
+      // unconditional request — a caching proxy in the way, a control plane
+      // answering from a stale validator — carries no ruleset, so reporting it
+      // as "nothing changed" would leave the first load with nothing at all.
+      if (validator === undefined) {
+        throw new Error(`Flag endpoint ${this.#url} responded 304 to an unconditional request`);
+      }
+      return null;
+    }
 
     if (!response.ok) {
       throw new Error(`Flag endpoint ${this.#url} responded ${response.status}`);

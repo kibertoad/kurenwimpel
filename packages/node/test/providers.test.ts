@@ -133,20 +133,24 @@ describe('HttpFlagProvider', () => {
     expect(headers['if-none-match']).toBe('W/"rev-3"');
   });
 
-  it('treats 304 as unchanged', async () => {
+  it('treats 304 as unchanged when it answers a conditional request', async () => {
     const provider = new HttpFlagProvider({
       url: 'https://flags.test/current',
       fetch: () => Promise.resolve(new Response(null, { status: 304 })),
     });
 
-    expect(
-      await provider.load({
-        flags: new Map(),
-        segments: new Map(),
-        version: 'rev-1',
-        fetchedAt: 0,
-      }),
-    ).toBeNull();
+    expect(await provider.load(createSnapshot([], { version: 'rev-1' }))).toBeNull();
+  });
+
+  it('rejects a 304 answering a request that carried no validator', async () => {
+    // Nothing was asked, so "unchanged" answers nothing — and on a first load
+    // reporting it as unchanged would leave the client with no ruleset at all.
+    const provider = new HttpFlagProvider({
+      url: 'https://flags.test/current',
+      fetch: () => Promise.resolve(new Response(null, { status: 304 })),
+    });
+
+    await expect(provider.load()).rejects.toThrow(/unconditional request/u);
   });
 
   it('throws on a non-ok response', async () => {

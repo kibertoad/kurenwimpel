@@ -75,9 +75,9 @@ export type Rollout = readonly RolloutBucket[] | RolloutSplit;
  * Individual targeting: these keys always get this variant.
  *
  * Checked before traffic allocation and rules, so a QA account or a demo
- * tenant sees a treatment regardless of any percentage. Keys here are matched
- * with a linear scan — a list beyond a few dozen belongs in a segment, whose
- * membership sets are indexed.
+ * tenant sees a treatment regardless of any percentage. Snapshots fold every
+ * flag's targets into one key-to-variant map when they are built, so the list
+ * costs one probe per evaluation however long it grows.
  */
 export interface VariantTarget {
   readonly variant: string;
@@ -96,6 +96,13 @@ export interface VariantTarget {
 export interface TrafficAllocation {
   /** Share of traffic admitted, 0–100. Granularity is 0.01. */
   readonly percent: number;
+  /**
+   * The identity the gate hashes. Defaults to the targeting key — one identity
+   * decides "is this subject in the experiment" — which admits an account's
+   * users independently even when assignment then clusters them. Set it to the
+   * split's `bucketBy` attribute to admit or exclude the whole cohort together.
+   */
+  readonly bucketBy?: string;
   readonly seed?: string;
 }
 

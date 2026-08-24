@@ -51,3 +51,20 @@ export function requireFiniteNumber(value: unknown, field: string): number {
   }
   return value;
 }
+
+/**
+ * An optional scalar: absent, or an explicit JSON `null`, reads as `undefined`.
+ * Anything else still has to be valid — a malformed salt, seed, or bucketBy
+ * rejects the definition rather than being silently dropped, because dropping
+ * one quietly reshuffles or reassigns a whole cohort.
+ */
+export function optionalString(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireString(value, field);
+}
+
+/** The {@link optionalString} rule, for a number field. */
+export function optionalFiniteNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  return requireFiniteNumber(value, field);
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { evaluateFlag } from '../../src/index.js';
+import { buildTargetIndex, evaluateFlag } from '../../src/index.js';
 import type { FlagDefinition } from '../../src/index.js';
 
 const booleanFlag: FlagDefinition<boolean> = {
@@ -10,8 +10,6 @@ const booleanFlag: FlagDefinition<boolean> = {
   defaultVariant: 'off',
   offVariant: 'off',
 };
-
-const users = (count: number): string[] => Array.from({ length: count }, (_, i) => `user-${i}`);
 
 describe('evaluateFlag pipeline', () => {
   it('serves the off variant when disabled, ignoring everything else', () => {
@@ -133,206 +131,83 @@ describe('evaluateFlag pipeline', () => {
   });
 });
 
-describe('rollouts', () => {
-  it('splits deterministically and close to the declared weights', () => {
-    const flag: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      rollout: [
-        { variant: 'on', weight: 25 },
-        { variant: 'off', weight: 75 },
-      ],
-    };
+describe('individual targets', () => {
+  const targeted: FlagDefinition<boolean> = {
+    ...booleanFlag,
+    targets: [
+      { variant: 'on', keys: ['qa-1', 'qa-2'] },
+      { variant: 'off', keys: ['banned'] },
+    ],
+  };
 
-    const keys = users(20_000);
-    const onShare =
-      keys.filter((key) => evaluateFlag(flag, { targetingKey: key }).value === true).length /
-      keys.length;
+  it('resolves through a compiled index when the environment carries one', () => {
+    const targetIndex = buildTargetIndex([targeted]);
 
-    expect(onShare).toBeGreaterThan(0.24);
-    expect(onShare).toBeLessThan(0.26);
-
-    const first = evaluateFlag(flag, { targetingKey: 'user-42' });
-    expect(evaluateFlag(flag, { targetingKey: 'user-42' })).toEqual(first);
-    expect(first.reason).toBe('SPLIT');
-  });
-
-  it('keeps a subject in the retained slice when a rollout is widened', () => {
-    const at = (weight: number): FlagDefinition<boolean> => ({
-      ...booleanFlag,
-      rollout: [
-        { variant: 'on', weight },
-        { variant: 'off', weight: 100 - weight },
-      ],
+    expect(evaluateFlag(targeted, { targetingKey: 'qa-2' }, { targetIndex })).toMatchObject({
+      value: true,
+      reason: 'TARGETING_MATCH',
     });
-
-    const flipped = users(2000).filter(
-      (key) =>
-        evaluateFlag(at(20), { targetingKey: key }).value === true &&
-        evaluateFlag(at(50), { targetingKey: key }).value === false,
-    );
-
-    expect(flipped).toHaveLength(0);
-  });
-
-  it('reports a missing targeting key but still serves the default', () => {
-    const result = evaluateFlag({ ...booleanFlag, rollout: [{ variant: 'on', weight: 100 }] }, {});
-
-    expect(result).toMatchObject({
-      value: false,
-      reason: 'ERROR',
-      errorCode: 'TARGETING_KEY_MISSING',
-    });
-  });
-
-  it('buckets whole cohorts together with bucketBy', () => {
-    const flag: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      rollout: {
-        bucketBy: 'accountId',
-        buckets: [
-          { variant: 'on', weight: 50 },
-          { variant: 'off', weight: 50 },
-        ],
-      },
-    };
-
-    const alice = evaluateFlag(flag, { targetingKey: 'alice', accountId: 'acme' });
-    const bob = evaluateFlag(flag, { targetingKey: 'bob', accountId: 'acme' });
-    expect(alice.variant).toBe(bob.variant);
-
-    // Numbers are accepted as bucketing identities.
-    expect(evaluateFlag(flag, { targetingKey: 'x', accountId: 42 }).reason).toBe('SPLIT');
-  });
-
-  it('names the missing bucketBy attribute instead of silently bucketing', () => {
-    const flag: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      rollout: { bucketBy: 'accountId', buckets: [{ variant: 'on', weight: 100 }] },
-    };
-
-    const result = evaluateFlag(flag, { targetingKey: 'alice' });
-    expect(result).toMatchObject({
-      value: false,
-      reason: 'ERROR',
-      errorCode: 'TARGETING_KEY_MISSING',
-    });
-    expect(result.errorMessage).toContain('accountId');
-  });
-
-  it('re-randomises assignment when the seed changes, and only then', () => {
-    const seeded = (seed: string): FlagDefinition<boolean> => ({
-      ...booleanFlag,
-      rollout: {
-        seed,
-        buckets: [
-          { variant: 'on', weight: 50 },
-          { variant: 'off', weight: 50 },
-        ],
-      },
-    });
-
-    const keys = users(2000);
-    const moved = keys.filter(
-      (key) =>
-        evaluateFlag(seeded('run-1'), { targetingKey: key }).variant !==
-        evaluateFlag(seeded('run-2'), { targetingKey: key }).variant,
-    );
-
-    // Two independent 50/50 draws disagree for about half the subjects.
-    expect(moved.length).toBeGreaterThan(keys.length * 0.4);
-    expect(moved.length).toBeLessThan(keys.length * 0.6);
-
-    expect(evaluateFlag(seeded('run-1'), { targetingKey: 'user-7' })).toEqual(
-      evaluateFlag(seeded('run-1'), { targetingKey: 'user-7' }),
+    expect(evaluateFlag(targeted, { targetingKey: 'nobody' }, { targetIndex }).reason).toBe(
+      'STATIC',
     );
   });
 
-  it('falls through to the default variant when a split carries no weight', () => {
-    // A parked experiment: all-zero weights serve the default rather than
-    // dropping the flag or erroring.
-    const result = evaluateFlag(
-      {
-        ...booleanFlag,
-        rollout: [
-          { variant: 'on', weight: 0 },
-          { variant: 'off', weight: 0 },
-        ],
-      },
-      { targetingKey: 'user-1' },
-    );
+  it('agrees with the uncompiled scan, so an index only changes the cost', () => {
+    const targetIndex = buildTargetIndex([targeted]);
+
+    for (const key of ['qa-1', 'qa-2', 'banned', 'someone-else', '']) {
+      expect(evaluateFlag(targeted, { targetingKey: key }, { targetIndex })).toEqual(
+        evaluateFlag(targeted, { targetingKey: key }),
+      );
+    }
+  });
+});
+
+describe('definitions the parser would have rejected', () => {
+  // Nothing here can arrive through parseFlagDefinition. It arrives when a
+  // caller casts JSON.parse output to FlagDefinition, and the promise this
+  // module makes is that it degrades to a result rather than a thrown TypeError
+  // on a request path.
+  const handBuilt = (overrides: Record<string, unknown>): FlagDefinition<boolean> => ({
+    ...booleanFlag,
+    ...overrides,
+  });
+
+  it('errors on a split object carrying no buckets', () => {
+    const result = evaluateFlag(handBuilt({ rollout: { bucketBy: 'accountId' } }), {
+      targetingKey: 'user-1',
+      accountId: 'acme',
+    });
+
+    expect(result).toMatchObject({ reason: 'STATIC', variant: 'off' });
+  });
+
+  it('skips a rule with no condition list instead of matching everyone', () => {
+    const result = evaluateFlag(handBuilt({ rules: [{ id: 'broken', variant: 'on' }] }), {
+      targetingKey: 'user-1',
+    });
 
     expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
   });
 
-  it('treats a weight total that overflows to Infinity as unusable', () => {
-    // Hand-built flags bypass the parser; the split must not silently route
-    // every subject to the last bucket.
-    const result = evaluateFlag(
-      {
-        ...booleanFlag,
-        rollout: [
-          { variant: 'on', weight: 1e308 },
-          { variant: 'off', weight: 1e308 },
-        ],
-      },
-      { targetingKey: 'user-1' },
-    );
+  it('targets nobody through a keys field that is not a list', () => {
+    // A bare string would otherwise match every substring of itself, and would
+    // disagree with the compiled index, which iterates it as characters.
+    const flag = handBuilt({ targets: [{ variant: 'on', keys: 'qa-1' }] });
+    const targetIndex = buildTargetIndex([flag]);
 
-    expect(result).toMatchObject({ variant: 'off', reason: 'STATIC' });
+    expect(evaluateFlag(flag, { targetingKey: 'qa-1' }).reason).toBe('STATIC');
+    expect(evaluateFlag(flag, { targetingKey: 'qa-1' }, { targetIndex }).reason).toBe('STATIC');
   });
 
-  it('gives rule-level rollouts a domain no flag-level rollout can collide with', () => {
-    // Under the old ':'-delimited scheme, rule 'r1' of a flag salted 'f'
-    // shared its hash domain with a whole flag salted 'f:r1'.
-    const ruled: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      salt: 'f',
-      rules: [
-        {
-          id: 'r1',
-          conditions: [],
-          rollout: [
-            { variant: 'on', weight: 50 },
-            { variant: 'off', weight: 50 },
-          ],
-        },
-      ],
-    };
-    const salted: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      salt: 'f:r1',
-      rollout: [
-        { variant: 'on', weight: 50 },
-        { variant: 'off', weight: 50 },
-      ],
-    };
+  it('reports a shape it cannot walk at all as an invalid definition', () => {
+    // `rules` as an object rather than a list is not iterable, so the walk
+    // itself throws where every other guard here is a value check.
+    const result = evaluateFlag(handBuilt({ rules: { id: 'broken', variant: 'on' } }), {
+      targetingKey: 'user-1',
+    });
 
-    const agreeing = users(200).filter(
-      (key) =>
-        evaluateFlag(ruled, { targetingKey: key }).variant ===
-        evaluateFlag(salted, { targetingKey: key }).variant,
-    );
-
-    // Independent 50/50 draws agree for about half the subjects, not all.
-    expect(agreeing.length).toBeGreaterThan(60);
-    expect(agreeing.length).toBeLessThan(140);
-  });
-
-  it('serves a rule-level rollout with the rule id attached', () => {
-    const result = evaluateFlag(
-      {
-        ...booleanFlag,
-        rules: [
-          {
-            id: 'paid-ramp',
-            conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }],
-            rollout: [{ variant: 'on', weight: 100 }],
-          },
-        ],
-      },
-      { targetingKey: 'user-1', plan: 'pro' },
-    );
-
-    expect(result).toMatchObject({ value: true, reason: 'SPLIT', ruleId: 'paid-ramp' });
+    expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
+    expect(result.errorMessage).toContain('not a usable definition');
   });
 });

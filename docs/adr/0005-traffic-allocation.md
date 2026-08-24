@@ -55,9 +55,14 @@ pinned to `treatment` sees it even at `percent: 0`.
   ramping exposure touches one number and invalidates nothing.
 - `NOT_ALLOCATED` has no OFREP name; it maps to `STATIC` on the wire
   (ADR 0003) since the statically configured default is what was served.
-- Allocation always buckets on `targetingKey` (not `bucketBy`) — one identity
-  decides "is this subject in the experiment", even if assignment then
-  clusters by account. Absent key → the usual serve-default-plus-error path.
+- Allocation buckets on `targetingKey` by default, not on the split's
+  `bucketBy` — one identity decides "is this subject in the experiment", even
+  if assignment then clusters by account. That default splits a cohort the
+  split would have kept together, so the gate takes its own optional
+  `bucketBy`: setting it to the same attribute admits or excludes the whole
+  account. Keeping them separate knobs means neither one silently redefines
+  the other. Absent key → the usual serve-default-plus-error path, naming the
+  attribute it wanted.
 
 ## Alternatives rejected
 

@@ -85,8 +85,10 @@ a caller gets is decided, in order:
    `NOT_ALLOCATED`. `allocation: { percent: 20 }` admits 20% of traffic into
    the rules and rollouts; everyone else never reaches them.
 5. The first **rule** whose conditions all match → its `variant`, or its
-   `rollout`.
-6. The flag's own `rollout`, if it has one.
+   `rollout`. That first match decides; nothing below it is consulted, so a rule
+   whose rollout is parked at zero serves `defaultVariant` rather than handing
+   the subject to the next rule.
+6. The flag's own `rollout`, if no rule matched.
 7. `defaultVariant`, reason `STATIC`.
 
 The **context** is flat, the same shape OpenFeature and OFREP use on the wire:
@@ -109,6 +111,11 @@ relative, so `[{on, 1}, {off, 3}]` is 25/75. The object form adds two knobs:
 `bucketBy` hashes an attribute instead of the targeting key, so a whole
 account flips together. `seed` re-randomises this one split — a fresh draw for
 an experiment's next iteration — without touching anything else.
+
+The allocation gate is a separate draw and hashes the targeting key by default,
+which admits an account's users independently even where assignment clusters
+them. An experiment that has to take or leave whole accounts gives the gate the
+same attribute: `allocation: { percent: 20, bucketBy: "accountId" }`.
 
 A **segment** is a named, reusable audience: explicit `included` / `excluded`
 key lists (compiled to hash sets, so a hundred-thousand-key list costs one
@@ -233,14 +240,21 @@ fails.
 
 - The **first** load is strict: `init()` / `start()` reject, so a service that
   cannot read its flags at startup should fail to start rather than serving every
-  request on fallbacks.
+  request on fallbacks. A provider answering "unchanged" to that first load —
+  a 304 from a caching proxy, say — counts as a failure: there is no snapshot
+  behind it to serve.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
 - A **malformed flag or segment** is dropped and reported through
   `onParseIssues`; the rest of the ruleset still loads.
-- **Evaluation** never throws. Unknown key, missing variant, wrong type, absent
-  targeting key, or a prerequisite cycle all return the caller's default plus an
-  `errorCode` on the `*Details` variant of the getter.
+- **Per-flag evaluation** never throws. Unknown key, missing variant, wrong
+  type, absent targeting key, a prerequisite cycle, or a hand-built definition
+  the parser never saw all return the caller's default plus an `errorCode` on
+  the `*Details` variant of the getter.
+- `evaluateAll()` is the one call that throws, and only before the first load: a
+  bulk body has no per-flag slot to report `PROVIDER_NOT_READY` in, and
+  answering it with zero flags is indistinguishable from a healthy empty
+  ruleset. Check `ready` first if a 5xx is not what you want.
 - A throwing `onImpression` hook is reported through `onError` and never fails
   the evaluation.
 

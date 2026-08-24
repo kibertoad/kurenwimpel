@@ -34,11 +34,23 @@ export interface ImpressionEvent {
   readonly timestamp: number;
 }
 
+/** Knobs for {@link FeatureFlagClient.evaluateAll}. */
+export interface BulkEvaluationOptions {
+  /**
+   * Emit an impression per flag. Off by default: a bulk fetch is not an
+   * exposure, and counting it as one makes every experiment's exposed
+   * population "everyone who loaded the page".
+   */
+  readonly impressions?: boolean;
+}
+
 export interface FeatureFlagClientOptions {
   readonly provider: FlagProvider;
   /**
    * Attributes merged under every per-call context — service name, region,
-   * deployment stage. Per-call values win on conflict.
+   * deployment stage. A per-call attribute wins on conflict; passing it as
+   * `undefined` clears the default for that one call, and leaving it out
+   * inherits the default.
    */
   readonly defaultContext?: EvaluationContext;
   /**
@@ -60,21 +72,27 @@ export interface FeatureFlagClientOptions {
  * Loading is async and explicit; evaluation is synchronous and total. Once
  * {@link FeatureFlagClient.init} has resolved, `getBoolean` and friends never
  * throw, never await, and never do I/O — they read the in-memory snapshot and
- * fall back to the caller's default for anything they cannot resolve.
+ * fall back to the caller's default for anything they cannot resolve. The one
+ * exception is {@link FeatureFlagClient.evaluateAll}, which has nowhere to put
+ * a per-flag error and so refuses to answer at all before the first load.
  */
 export class FeatureFlagClient {
   readonly #provider: FlagProvider;
   readonly #defaultContext: EvaluationContext;
+  /** The default context's entries, walked once here instead of per evaluation. */
+  readonly #defaultEntries: readonly (readonly [string, AttributeValue | undefined])[];
   readonly #onError: ((error: Error, info: ClientErrorInfo) => void) | undefined;
   readonly #onImpression: ((event: ImpressionEvent) => void) | undefined;
 
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
+  #environment: EvaluationEnvironment = environmentOf(EMPTY_SNAPSHOT);
   #ready = false;
   #refreshInFlight: Promise<boolean> | undefined;
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
     this.#defaultContext = options.defaultContext ?? {};
+    this.#defaultEntries = Object.entries(this.#defaultContext);
     this.#onError = options.onError;
     this.#onImpression = options.onImpression;
   }
@@ -101,8 +119,18 @@ export class FeatureFlagClient {
    */
   async init(): Promise<void> {
     const loaded = await this.#provider.load();
-    if (loaded !== null) this.#snapshot = loaded;
-    this.#ready = true;
+
+    // `null` means "unchanged since the snapshot I gave you", and the first
+    // load hands over nothing to compare against — so there is no snapshot to
+    // keep serving. Coming up ready on an empty one would answer every lookup
+    // with FLAG_NOT_FOUND, which is the failure this method exists to prevent.
+    if (loaded === null) {
+      throw new Error(
+        `Provider "${this.#provider.name}" reported no change on the first load, so there is no ruleset to serve`,
+      );
+    }
+
+    this.#install(loaded);
   }
 
   /**
@@ -125,8 +153,7 @@ export class FeatureFlagClient {
       const loaded = await this.#provider.load(this.#ready ? this.#snapshot : undefined);
       if (loaded === null) return false;
 
-      this.#snapshot = loaded;
-      this.#ready = true;
+      this.#install(loaded);
       return true;
     } catch (error) {
       this.#report(error, 'load');
@@ -144,7 +171,14 @@ export class FeatureFlagClient {
 
   /** Replaces the snapshot directly. For tests and for pushed updates. */
   setSnapshot(snapshot: FlagSnapshot): void {
+    this.#install(snapshot);
+  }
+
+  #install(snapshot: FlagSnapshot): void {
     this.#snapshot = snapshot;
+    // Derived once per snapshot rather than per evaluation: the hot path should
+    // not be allocating an environment object per lookup.
+    this.#environment = environmentOf(snapshot);
     this.#ready = true;
   }
 
@@ -216,16 +250,27 @@ export class FeatureFlagClient {
 
   /**
    * Evaluates every flag in the snapshot against one context — the shape the
-   * OFREP bulk route serves. Returns an empty array before the first load.
+   * OFREP bulk route serves. The typed getters are the exposure points, so no
+   * impressions are emitted unless {@link BulkEvaluationOptions.impressions}
+   * asks for them.
+   *
+   * @throws before the first load. A bulk response has no per-flag slot to
+   * report `PROVIDER_NOT_READY` in, and an empty array cannot be told apart
+   * from a healthy empty ruleset — a caller that answered 200 with it would
+   * have every downstream SDK silently serving its own defaults. Check
+   * {@link FeatureFlagClient.ready} to avoid the throw.
    */
-  evaluateAll(context?: EvaluationContext): EvaluationResult[] {
+  evaluateAll(context?: EvaluationContext, options?: BulkEvaluationOptions): EvaluationResult[] {
+    if (!this.#ready) {
+      throw new Error(`Client for provider "${this.#provider.name}" has not loaded flags yet`);
+    }
+
     const merged = this.#mergeContext(context);
-    const environment = this.#environment();
     const results: EvaluationResult[] = [];
 
     for (const flag of this.#snapshot.flags.values()) {
-      const result = evaluateFlag(flag, merged, environment);
-      this.#impress(result, merged);
+      const result = evaluateFlag(flag, merged, this.#environment);
+      if (options?.impressions === true) this.#impress(result, merged);
       results.push(result);
     }
 
@@ -257,11 +302,7 @@ export class FeatureFlagClient {
       };
     }
 
-    return evaluateFlag(flag, context, this.#environment());
-  }
-
-  #environment(): EvaluationEnvironment {
-    return { flags: this.#snapshot.flags, segments: this.#snapshot.segments };
+    return evaluateFlag(flag, context, this.#environment);
   }
 
   #typed<T extends FlagValue>(
@@ -332,8 +373,12 @@ export class FeatureFlagClient {
     // inherited attributes into targeting.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const merged = Object.create(null) as Record<string, AttributeValue | undefined>;
-    for (const [attribute, value] of Object.entries(this.#defaultContext)) {
-      merged[attribute] = value;
+
+    // A default survives only where the call said nothing about the attribute.
+    // Naming it with an explicit `undefined` is how a caller says "this request
+    // has no stage", which it otherwise has no way to express.
+    for (const [attribute, value] of this.#defaultEntries) {
+      if (!Object.hasOwn(context, attribute)) merged[attribute] = value;
     }
     for (const [attribute, value] of Object.entries(context)) {
       if (value !== undefined) merged[attribute] = value;
@@ -348,6 +393,15 @@ export class FeatureFlagClient {
       provider: this.#provider.name,
     });
   }
+}
+
+/** The lookups evaluation needs from a snapshot, in the shape it wants them. */
+function environmentOf(snapshot: FlagSnapshot): EvaluationEnvironment {
+  return {
+    flags: snapshot.flags,
+    segments: snapshot.segments,
+    targetIndex: snapshot.targetIndex,
+  };
 }
 
 /** An {@link EvaluationResult} whose value is guaranteed present, defaulted if need be. */

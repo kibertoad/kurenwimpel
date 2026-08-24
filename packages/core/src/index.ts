@@ -40,6 +40,8 @@ export type { SegmentMap } from './evaluation/conditions.js';
 export { evaluateFlag, pickFromRollout } from './evaluation/evaluate.js';
 export type { EvaluationEnvironment } from './evaluation/evaluate.js';
 export { compileSegment } from './evaluation/segments.js';
+export { buildTargetIndex, compileTargets } from './evaluation/targets.js';
+export type { TargetIndex } from './evaluation/targets.js';
 export { compareVersions, parseVersion } from './evaluation/semver.js';
 export type { ParsedVersion } from './evaluation/semver.js';
 
@@ -59,6 +61,7 @@ export { parseSegmentDefinition } from './parsing/segment.js';
 // runtime
 export { FeatureFlagClient } from './runtime/client.js';
 export type {
+  BulkEvaluationOptions,
   ClientErrorInfo,
   FeatureFlagClientOptions,
   ImpressionEvent,
