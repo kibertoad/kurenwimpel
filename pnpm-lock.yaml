@@ -77,6 +77,28 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1))
 
+  packages/ofrep:
+    dependencies:
+      '@toad-contracts/core':
+        specifier: ^0.4.0
+        version: 0.4.0
+      '@toad-contracts/valibot':
+        specifier: ^0.5.0
+        version: 0.5.0(valibot@1.4.2(typescript@7.0.2))
+      valibot:
+        specifier: ^1.4.2
+        version: 1.4.2(typescript@7.0.2)
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1))
+
 packages:
 
   '@cloudflare/kv-asset-handler@0.5.0':
@@ -892,6 +914,14 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
+  '@toad-contracts/core@0.4.0':
+    resolution: {integrity: sha512-5wyHoGMPN/X/J1woRk279jFoup2B+kmbyW1MF+BbdqD5aEQJtqWI9WWyoZLYIczhi02c4Yap1unonfcQz7GAyw==}
+
+  '@toad-contracts/valibot@0.5.0':
+    resolution: {integrity: sha512-Zi9+YlyPzUz9Vcf/NLtQTkenR16YnD4ipl3Uwr+/den6wYnfrJ+V8Pxdcwe/3akpIdZuP7cz/5R7E0/Khaz1/Q==}
+    peerDependencies:
+      valibot: '>=1.0.0'
+
   '@turbo/darwin-64@2.10.11':
     resolution: {integrity: sha512-v3R+1R/Ysozyo+p7Ri8MCIbndOvYt3DgPFrGLhrhQHfvyvbxyH3WyJj+A/2JTNmNleuAlh3JUyCV0iSVHIONTA==}
     cpu: [x64]
@@ -1392,6 +1422,14 @@ packages:
 
   unenv@2.0.0-rc.24:
     resolution: {integrity: sha512-i7qRCmY42zmCwnYlh9H2SvLEypEFGye5iRmEMKjcGi7zk9UquigRjFtTLz0TYqr0ZGLZhaMHl/foy1bZR+Cwlw==}
+
+  valibot@1.4.2:
+    resolution: {integrity: sha512-gjdCvJ6d3RyHAneqxMYMW9QMCwYMb3jpOO0IyHZV1bnRHFBHrX3VkIILt5XYR0WhwHiH7Mty8ovuPZ/O3gamrg==}
+    peerDependencies:
+      typescript: '>=5'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
 
   vite@8.2.2:
     resolution: {integrity: sha512-cFKLV/PRgAUlIRm5WjMjJ86jrftzpqcgH+Us+DS8mI3CDNiH30Whrz8uHL3+MOLPAgqbMBAqWdAHAphOAM+z/Q==}
@@ -1998,6 +2036,15 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
+  '@toad-contracts/core@0.4.0':
+    dependencies:
+      '@standard-schema/spec': 1.1.0
+
+  '@toad-contracts/valibot@0.5.0(valibot@1.4.2(typescript@7.0.2))':
+    dependencies:
+      '@toad-contracts/core': 0.4.0
+      valibot: 1.4.2(typescript@7.0.2)
+
   '@turbo/darwin-64@2.10.11':
     optional: true
 
@@ -2495,6 +2542,10 @@ snapshots:
   unenv@2.0.0-rc.24:
     dependencies:
       pathe: 2.0.3
+
+  valibot@1.4.2(typescript@7.0.2):
+    optionalDependencies:
+      typescript: 7.0.2
 
   vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1):
     dependencies:

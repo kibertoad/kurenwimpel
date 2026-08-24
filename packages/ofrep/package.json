@@ -1,0 +1,37 @@
+{
+  "name": "@kurenwimpel/ofrep",
+  "version": "0.0.0",
+  "description": "OFREP (OpenFeature Remote Evaluation Protocol) API contract, as Standard Schema definitions.",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@toad-contracts/core": "^0.4.0",
+    "@toad-contracts/valibot": "^0.5.0",
+    "valibot": "^1.4.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
