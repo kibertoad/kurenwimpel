@@ -54,11 +54,16 @@ export class HttpFlagProvider implements FlagProvider {
     });
 
     if (response.status === 304) {
-      // "Unchanged" is only an answer to a question we asked. A 304 to an
-      // unconditional request — a caching proxy in the way, a control plane
-      // answering from a stale validator — carries no ruleset, so reporting it
-      // as "nothing changed" would leave the first load with nothing at all.
-      if (validator === undefined) {
+      // A 304 carries no ruleset, so it is only usable as "keep serving what
+      // you already have" — and on the first load there is nothing to keep.
+      // The test is therefore whether a snapshot exists at all, not whether
+      // this request carried a validator. Keying it off the validator turned
+      // every 304 into a failure for a healthy client whose control plane had
+      // simply stopped stamping ETags: it holds a perfectly good snapshot,
+      // sends no `If-None-Match`, and a caching proxy answers 304 anyway — so
+      // it reported an error through `onError` on every poll, forever, while
+      // serving exactly the right flags.
+      if (previous === undefined) {
         throw new Error(`Flag endpoint ${this.#url} responded 304 to an unconditional request`);
       }
       return null;

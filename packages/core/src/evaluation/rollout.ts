@@ -76,6 +76,21 @@ export function bucketingKeyFor(
 }
 
 /**
+ * Whether a bucket carries weight the split should distribute.
+ *
+ * Written as "not greater than zero" rather than "less than or equal to zero"
+ * so that a weight of NaN — which a hand-built definition can carry, the
+ * parser rejecting every non-finite one — is excluded rather than counted.
+ * {@link usableWeight} and {@link pickWeighted} must agree on this exactly: a
+ * bucket the total skipped but the walk did not poisoned `cumulative` from
+ * that bucket onward, so every later `point < cumulative` test answered false
+ * and the whole split silently skewed to its last usable bucket.
+ */
+function carriesWeight(bucket: RolloutBucket): boolean {
+  return bucket.weight > 0;
+}
+
+/**
  * The weight a split actually distributes, or `undefined` when it distributes
  * none: all weights at zero — a parked experiment — or a total that overflows
  * to Infinity, which would send every subject to the last bucket.
@@ -83,7 +98,7 @@ export function bucketingKeyFor(
 function usableWeight(buckets: readonly RolloutBucket[]): number | undefined {
   let total = 0;
   for (const bucket of buckets) {
-    if (bucket.weight > 0) total += bucket.weight;
+    if (carriesWeight(bucket)) total += bucket.weight;
   }
   return total > 0 && Number.isFinite(total) ? total : undefined;
 }
@@ -101,7 +116,7 @@ function pickWeighted(
   let last: string | undefined;
 
   for (const bucket of buckets) {
-    if (bucket.weight <= 0) continue;
+    if (!carriesWeight(bucket)) continue;
     cumulative += bucket.weight;
     if (point < cumulative) return bucket.variant;
     last = bucket.variant;

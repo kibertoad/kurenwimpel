@@ -158,6 +158,39 @@ describe('FeatureFlagClient', () => {
     expect(client.getBoolean('enterprise-only', false, hostile)).toBe(false);
   });
 
+  it('reads an explicit null context as no context, not as a crash', async () => {
+    // A JavaScript caller can pass null past the optional parameter. The
+    // getters are documented never to throw, and `evaluateFlag` already
+    // absorbs the same mistake one layer down; merging used to walk straight
+    // into `Object.entries(null)`.
+    const client = new FeatureFlagClient({
+      provider: new StaticProvider([staffOnly]),
+      defaultContext: { service: 'billing' },
+    });
+    await client.init();
+
+    expect(client.getBoolean('staff', false, null as unknown as EvaluationContext)).toBe(true);
+    expect(client.evaluate('staff', null as unknown as EvaluationContext).variant).toBe('on');
+  });
+
+  it('does not let a non-enumerable own attribute erase the default', async () => {
+    // The two halves of the merge have to agree on what "the call said
+    // something about this attribute" means. Deciding it with `Object.hasOwn`
+    // while copying values with `Object.entries` let a non-enumerable own
+    // property suppress the default without supplying anything in its place,
+    // so targeting saw neither value.
+    const context = {} as Record<string, string>;
+    Object.defineProperty(context, 'service', { value: 'shipping', enumerable: false });
+
+    const client = new FeatureFlagClient({
+      provider: new StaticProvider([staffOnly]),
+      defaultContext: { service: 'billing' },
+    });
+    await client.init();
+
+    expect(client.getBoolean('staff', false, context)).toBe(true);
+  });
+
   it('applies the default context when no per-call context is given', async () => {
     const client = new FeatureFlagClient({
       provider: new StaticProvider([staffOnly]),

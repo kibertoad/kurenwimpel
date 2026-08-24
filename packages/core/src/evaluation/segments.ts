@@ -7,7 +7,7 @@
  * refresh and O(1) per evaluation.
  */
 
-import type { Segment, SegmentDefinition } from '../model/segment.js';
+import type { Segment, SegmentDefinition, SegmentRule } from '../model/segment.js';
 
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
@@ -24,8 +24,25 @@ export function compileSegment(definition: SegmentDefinition): Segment {
     key: definition.key,
     included: toKeySet(definition.included),
     excluded: toKeySet(definition.excluded),
-    rules: Array.isArray(definition.rules) ? definition.rules : [],
+    rules: toRuleList(definition.rules),
   };
+}
+
+/**
+ * The rule list of a segment, copied rather than aliased.
+ *
+ * A snapshot promises an immutable, point-in-time view — `cloneJson` and
+ * `requireStringArray` keep the same promise on the parsing side — and a rule
+ * list held by reference breaks it: pushing onto the caller's array afterwards
+ * changes who a live snapshot matches. This is the one collection the compiler
+ * used to keep from its input as-is.
+ *
+ * `Array.isArray` narrows an already-typed list to `any[]` and takes the
+ * element type with it, so the assertion putting it back is confined here.
+ */
+function toRuleList(rules: readonly SegmentRule[] | undefined): readonly SegmentRule[] {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return Array.isArray(rules) ? [...(rules as readonly SegmentRule[])] : [];
 }
 
 /**
@@ -41,10 +58,28 @@ export function isCompiledSegment(value: Segment | SegmentDefinition): value is 
   );
 }
 
+/**
+ * The set form of a key list, built fresh from whatever the definition holds.
+ *
+ * Anything that iterates is accepted — an array, a `Set`, a `Set` from another
+ * realm, which fails `instanceof` while being exactly what it claims and used
+ * to compile to nothing at all, silently losing every key. A string is not: it
+ * iterates too, and reading `"u1"` as a key list would compile it to its
+ * characters and grant membership to "u". Anything else fails closed.
+ *
+ * Always a copy, including of a `Set` that arrives ready to use, for the
+ * reason the rule list is copied: the compiled segment must not alias what the
+ * caller can still write to. The cost is one pass per refresh, which is the
+ * trade this module already makes.
+ */
 function toKeySet(keys: readonly string[] | ReadonlySet<string> | undefined): ReadonlySet<string> {
-  if (keys instanceof Set) return keys.size === 0 ? EMPTY_KEYS : keys;
-  // A key list that is not a list fails closed: a bare string would otherwise
-  // compile to its characters and grant membership to "u".
-  if (!Array.isArray(keys) || keys.length === 0) return EMPTY_KEYS;
-  return new Set(keys);
+  if (!isKeyIterable(keys)) return EMPTY_KEYS;
+  const copy = new Set<string>(keys);
+  return copy.size === 0 ? EMPTY_KEYS : copy;
+}
+
+function isKeyIterable(keys: unknown): keys is Iterable<string> {
+  if (typeof keys !== 'object' || keys === null) return false;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return typeof (keys as Iterable<string>)[Symbol.iterator] === 'function';
 }

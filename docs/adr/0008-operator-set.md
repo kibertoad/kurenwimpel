@@ -52,8 +52,13 @@ audience is a segment, which is the named, testable version of the same OR.
 ## Consequences
 
 - Unknown operators from a newer control plane still fail closed at both
-  layers: the parser reports the definition, and a hand-built condition with
-  an unrecognised operator matches nothing.
+  layers: the parser drops the one rule that carries it and reports the drop,
+  leaving the rest of the definition serving, and a hand-built condition with
+  an unrecognised operator matches nothing. The rule is dropped rather than
+  the flag because such a rule could never have matched anyway — the ruleset
+  evaluates exactly as it would have with the rule in place, without the
+  `FLAG_NOT_FOUND` outage that rejecting the definition would have caused
+  (the argument `parsing/references.ts` makes for dangling references).
 - The semver comparator is ~80 lines owned in-repo (`evaluation/semver.ts`),
   pinned by the SemVer spec's precedence examples, rather than a dependency.
 - "No regex" is a security posture, recorded here so a future "just add

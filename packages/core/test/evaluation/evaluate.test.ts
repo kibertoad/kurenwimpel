@@ -247,6 +247,39 @@ describe('definitions the parser would have rejected', () => {
     expect(result.errorMessage).toContain('Not a flag definition');
   });
 
+  it('rejects an array carrying a string "key" as a definition', () => {
+    // "A record with a string key" is the parser's definition of a definition,
+    // and this used to be a second, looser copy of it: a bare `typeof
+    // value === 'object'` accepts an array whose `key` property is a string.
+    const array: unknown[] = [];
+    (array as unknown as { key: string }).key = 'new-checkout';
+
+    const result = evaluateFlag(array as unknown as FlagDefinition, { targetingKey: 'u1' });
+
+    expect(result.errorMessage).toContain('Not a flag definition');
+  });
+
+  it('keeps serving a flag whose one segment condition is malformed', () => {
+    // One unusable rule must cost that rule, not the whole flag: an ERROR
+    // result carries no value, so every SDK falls back to its own default.
+    const result = evaluateFlag(
+      {
+        ...booleanFlag,
+        rules: [
+          { id: 'broken', conditions: [{ operator: 'inSegment' }], variant: 'on' },
+          {
+            id: 'paid',
+            conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }],
+            variant: 'on',
+          },
+        ],
+      } as unknown as FlagDefinition<boolean>,
+      { targetingKey: 'u1', plan: 'pro' },
+    );
+
+    expect(result).toMatchObject({ value: true, variant: 'on', ruleId: 'paid' });
+  });
+
   it('reads a null context as an empty one, not as a broken flag', () => {
     // An explicit null skips the parameter default. Reporting it as an invalid
     // definition sends whoever reads the error after the wrong thing entirely.

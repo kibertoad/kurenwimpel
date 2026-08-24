@@ -22,6 +22,7 @@ import { parseCondition } from './condition.js';
 import {
   cloneJson,
   fail,
+  isDroppedRule,
   isRecord,
   optionalString,
   requireFiniteNumber,
@@ -66,7 +67,7 @@ export function parseFlagDefinition(raw: unknown, warnings?: FlagParseIssue[]): 
   const prerequisites = parsePrerequisites(raw['prerequisites'], key);
   const targets = parseTargets(raw['targets'], key, variantNames);
   const allocation = parseAllocation(raw['allocation'], key);
-  const rules = parseRules(raw['rules'], key, variantNames);
+  const rules = parseRules(raw['rules'], key, variantNames, warnings);
   const rollout = parseRollout(raw['rollout'], `flag ${key}`, variantNames);
   const metadata = parseMetadata(raw['metadata'], key);
 
@@ -232,67 +233,103 @@ function parseAllocation(raw: unknown, key: string): TrafficAllocation | undefin
   };
 }
 
+/** What every rule of one flag is validated against. */
+interface RuleContext {
+  readonly key: string;
+  readonly variantNames: ReadonlySet<string>;
+  /** Ids already taken, so a repeat is caught across the whole list. */
+  readonly seen: Set<string>;
+}
+
+/**
+ * The flag's targeting rules, minus any the parser had to give up on.
+ *
+ * A rule naming an operator this version does not know is dropped and
+ * reported; everything else about the rule still rejects the whole definition.
+ * Dropping is safe precisely because such a rule could never have matched — an
+ * unknown operator fails closed in the matcher — so the ruleset evaluates
+ * exactly as it would have with the rule in place, minus the outage that
+ * rejecting the flag would have caused. See {@link ParseFailureScope}.
+ */
 function parseRules(
   raw: unknown,
   key: string,
   variantNames: ReadonlySet<string>,
+  warnings: FlagParseIssue[] | undefined,
 ): TargetingRule[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) fail(`flag ${key}: rules must be an array`);
 
-  const seen = new Set<string>();
+  const at: RuleContext = { key, variantNames, seen: new Set<string>() };
+  const rules: TargetingRule[] = [];
 
-  return raw.map((entry: unknown, index: number): TargetingRule => {
-    if (!isRecord(entry)) fail(`flag ${key}: rule ${index} must be an object`);
-
-    const id = requireString(entry['id'], `flag ${key}: rule ${index} id`);
-
-    // The id is the only thing separating two rules' bucketing domains (ADR
-    // 0002), so two rules sharing one draw the same subjects into both ramps:
-    // two experiments on the flag would be perfectly correlated.
-    if (seen.has(id)) fail(`flag ${key}: rule id ${id} appears more than once`);
-    seen.add(id);
-
-    const conditionsRaw = entry['conditions'];
-    if (!Array.isArray(conditionsRaw)) {
-      fail(`flag ${key}: rule ${id} needs a conditions array`);
+  for (const [index, entry] of (raw as unknown[]).entries()) {
+    try {
+      rules.push(parseRule(entry, index, at));
+    } catch (error) {
+      if (!isDroppedRule(error)) throw error;
+      warnings?.push({
+        at: key,
+        message: `${error.message} — the rule is dropped, the flag is still served`,
+      });
     }
+  }
 
-    const where = `flag ${key}: rule ${id}`;
-    const conditions = conditionsRaw.map((condition: unknown) => parseCondition(condition, where));
-    const rolloutRaw = entry['rollout'] ?? undefined;
-    const rollout = parseRollout(rolloutRaw, where, variantNames);
+  return rules;
+}
 
-    // An explicit `null` reads as absent, the rule every other optional field
-    // in the parser follows. A control plane that serialises a rollout-only
-    // rule's unset variant as null would otherwise lose the whole flag.
-    const variantRaw = entry['variant'] ?? undefined;
+function parseRule(entry: unknown, index: number, at: RuleContext): TargetingRule {
+  const { key, variantNames, seen } = at;
+  if (!isRecord(entry)) fail(`flag ${key}: rule ${index} must be an object`);
 
-    if (variantRaw !== undefined) {
-      const name = requireString(variantRaw, `${where} variant`);
-      if (!variantNames.has(name)) {
-        fail(`${where} points at unknown variant ${name}`);
-      }
+  const id = requireString(entry['id'], `flag ${key}: rule ${index} id`);
+
+  // The id is the only thing separating two rules' bucketing domains (ADR
+  // 0002), so two rules sharing one draw the same subjects into both ramps:
+  // two experiments on the flag would be perfectly correlated. A dropped rule
+  // keeps its id reserved — the clash is a control-plane defect either way.
+  if (seen.has(id)) fail(`flag ${key}: rule id ${id} appears more than once`);
+  seen.add(id);
+
+  const conditionsRaw = entry['conditions'];
+  if (!Array.isArray(conditionsRaw)) {
+    fail(`flag ${key}: rule ${id} needs a conditions array`);
+  }
+
+  const where = `flag ${key}: rule ${id}`;
+  const conditions = conditionsRaw.map((condition: unknown) => parseCondition(condition, where));
+  const rolloutRaw = entry['rollout'] ?? undefined;
+  const rollout = parseRollout(rolloutRaw, where, variantNames);
+
+  // An explicit `null` reads as absent, the rule every other optional field
+  // in the parser follows. A control plane that serialises a rollout-only
+  // rule's unset variant as null would otherwise lose the whole flag.
+  const variantRaw = entry['variant'] ?? undefined;
+
+  if (variantRaw !== undefined) {
+    const name = requireString(variantRaw, `${where} variant`);
+    if (!variantNames.has(name)) {
+      fail(`${where} points at unknown variant ${name}`);
     }
+  }
 
-    if (variantRaw === undefined && rollout === undefined) {
-      // An empty rollout is not a missing one. Telling an operator who wrote
-      // `rollout: []` to "declare a variant or a rollout" sends them looking
-      // for a field that is already there.
-      fail(
-        rolloutRaw === undefined
-          ? `${where} must declare a variant or a rollout`
-          : `${where} declares an empty rollout and no variant`,
-      );
-    }
+  if (variantRaw === undefined && rollout === undefined) {
+    // An empty rollout is not a missing one. Telling an operator who wrote
+    // `rollout: []` to "declare a variant or a rollout" sends them looking
+    // for a field that is already there.
+    fail(
+      rolloutRaw === undefined
+        ? `${where} must declare a variant or a rollout`
+        : `${where} declares an empty rollout and no variant`,
+    );
+  }
 
-    return {
-      id,
-      conditions,
-      ...(typeof variantRaw === 'string' ? { variant: variantRaw } : {}),
-      ...(rollout === undefined ? {} : { rollout }),
-    };
-  });
+  return {
+    id,
+    conditions,
+    ...(typeof variantRaw === 'string' ? { variant: variantRaw } : {}),
+    ...(rollout === undefined ? {} : { rollout }),
+  };
 }
 
 /**
@@ -370,9 +407,19 @@ function parseMetadata(raw: unknown, key: string): FlagMetadata | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!isRecord(raw)) fail(`flag ${key}: metadata must be an object`);
 
+  // The finite check is the same one variants and weights get, for the same
+  // reason: metadata travels out on every result and every impression, and
+  // `JSON.stringify` turns a NaN or an Infinity into `null` on the OFREP wire —
+  // an unserveable annotation discovered at the protocol layer rather than
+  // here, where the operator can still be told which field it was.
   for (const [field, value] of Object.entries(raw)) {
-    if (typeof value !== 'boolean' && typeof value !== 'string' && typeof value !== 'number') {
-      fail(`flag ${key}: metadata ${field} must be a boolean, string, or number`);
+    const usable =
+      typeof value === 'boolean' ||
+      typeof value === 'string' ||
+      (typeof value === 'number' && Number.isFinite(value));
+
+    if (!usable) {
+      fail(`flag ${key}: metadata ${field} must be a boolean, string, or finite number`);
     }
   }
 

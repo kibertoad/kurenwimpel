@@ -12,16 +12,72 @@ export interface FlagParseIssue {
   readonly message: string;
 }
 
+/**
+ * How much of the payload a parse failure costs.
+ *
+ * `definition` is the default and covers almost everything: the flag or
+ * segment is dropped and reported.
+ *
+ * `rule` is the one survivable failure — an operator a newer control plane
+ * knows and this version does not. It says nothing about the rest of the
+ * definition, and rejecting the whole thing over it answers FLAG_NOT_FOUND for
+ * every SDK and sends each one to its own hardcoded default, which is the
+ * worse of the two failures by the same argument `references.ts` makes for
+ * keeping a dangling reference. A rule carrying such an operator could never
+ * have matched anyway, so the rule is dropped and reported and the definition
+ * goes on being served — exactly what evaluation would have decided had the
+ * rule survived.
+ */
+export type ParseFailureScope = 'definition' | 'rule';
+
 export class FlagParseError extends Error {
   override readonly name = 'FlagParseError';
+
+  /** See {@link ParseFailureScope}. */
+  readonly scope: ParseFailureScope;
+
+  constructor(message: string, scope: ParseFailureScope = 'definition') {
+    super(message);
+    this.scope = scope;
+  }
 }
 
 export function fail(message: string): never {
   throw new FlagParseError(message);
 }
 
+/**
+ * Raised rather than returned so {@link parseCondition} keeps its documented
+ * contract for direct callers: every unusable condition still throws a
+ * {@link FlagParseError}. The rule-level callers are the ones that look at
+ * `scope` and absorb it.
+ */
+export function failUnsupportedOperator(message: string): never {
+  throw new FlagParseError(message, 'rule');
+}
+
+/** Whether a thrown value is the one parse failure a rule can be dropped for. */
+export function isDroppedRule(error: unknown): error is FlagParseError {
+  return error instanceof FlagParseError && error.scope === 'rule';
+}
+
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether a value is a definition: a record carrying a string `key`.
+ *
+ * The one answer to that question, shared by the parser — which uses it to
+ * recognise a definition collection shipped under a misspelled document key —
+ * and by `evaluateFlag`, which uses it to decide whether it was handed
+ * anything it can even name an error under. Written out twice, the two copies
+ * had already drifted: the evaluator's own `typeof value === 'object'` test
+ * accepted an array whose `key` element happened to be a string, because it
+ * did not exclude arrays the way {@link isRecord} does.
+ */
+export function isKeyedDefinition(value: unknown): value is { readonly key: string } {
+  return isRecord(value) && typeof value['key'] === 'string';
 }
 
 export function isScalarList(value: unknown): value is (string | number)[] {

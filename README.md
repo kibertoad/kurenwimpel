@@ -255,6 +255,10 @@ fails.
   kept. Each one already fails closed at evaluation, and dropping the flag would
   answer `FLAG_NOT_FOUND` and send every SDK to its own hardcoded default
   instead.
+- A **rule using an operator from a newer control plane** is dropped and
+  reported; the rest of the flag or segment still loads. Such a rule matches
+  nobody either way, so dropping it decides nothing differently — and it avoids
+  the same `FLAG_NOT_FOUND` outage.
 - **Per-flag evaluation** never throws. Unknown key, missing variant, wrong
   type, absent targeting key, a prerequisite cycle, or a hand-built definition
   the parser never saw all return the caller's default plus an `errorCode` on

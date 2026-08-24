@@ -8,7 +8,14 @@
 
 import { parseVersion } from '../evaluation/semver.js';
 import type { Condition, ConditionOperator } from '../model/flag.js';
-import { fail, isRecord, isScalarList, requireString, requireStringArray } from './primitives.js';
+import {
+  fail,
+  failUnsupportedOperator,
+  isRecord,
+  isScalarList,
+  requireString,
+  requireStringArray,
+} from './primitives.js';
 
 const OPERATORS = new Set<string>([
   'exists',
@@ -42,6 +49,10 @@ function isOperator(value: unknown): value is ConditionOperator {
  *
  * `where` prefixes error messages with the owning flag/segment and rule.
  *
+ * An operator this version does not know is the one failure that need not cost
+ * the definition: it throws with `scope: 'rule'`, and the rule-level callers
+ * absorb that by dropping the one rule. See {@link ParseFailureScope}.
+ *
  * @throws {FlagParseError} when the shape is not a usable condition.
  */
 export function parseCondition(raw: unknown, where: string, allowSegments = true): Condition {
@@ -49,7 +60,7 @@ export function parseCondition(raw: unknown, where: string, allowSegments = true
 
   const operator = raw['operator'];
   if (!isOperator(operator)) {
-    fail(`${where} has unsupported operator ${String(operator)}`);
+    failUnsupportedOperator(`${where} has unsupported operator ${String(operator)}`);
   }
 
   if (operator === 'inSegment' || operator === 'notInSegment') {

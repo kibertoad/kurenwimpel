@@ -9,7 +9,8 @@
 
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
 import type { Condition } from '../model/flag.js';
-import type { Segment, SegmentRule } from '../model/segment.js';
+import type { Segment, SegmentDefinition } from '../model/segment.js';
+import { compileSegment, isCompiledSegment } from './segments.js';
 import { compareVersions } from './semver.js';
 
 export type SegmentMap = ReadonlyMap<string, Segment>;
@@ -143,45 +144,41 @@ export function matchesCondition(
  * segment operators inside segments, and a hand-built one fails closed here).
  *
  * This is exported, so it also meets segments that reached evaluation without
- * the compiler: every field is checked for the shape it claims rather than
- * trusted to the type, and one that does not have it fails closed.
+ * the compiler — hand-built, half-compiled, or straight off a JSON payload.
+ * Whether a segment has the compiled shape is asked once, here, and answered
+ * by putting it through the compiler if it does not. That check used to be
+ * spread over one helper per field, which re-derived the same invariant on
+ * every membership test and still read a segment carrying its key lists as
+ * plain arrays — a perfectly ordinary {@link SegmentDefinition} — as a segment
+ * with no keys in it at all.
  */
-export function isInSegment(segment: Segment, context: EvaluationContext): boolean {
+export function isInSegment(
+  segment: Segment | SegmentDefinition,
+  context: EvaluationContext,
+): boolean {
+  const ready = isCompiledSegment(segment) ? segment : compileSegment(segment);
+  return matchesCompiledSegment(ready, context);
+}
+
+/** Membership against a segment already known to have the compiled shape. */
+function matchesCompiledSegment(segment: Segment, context: EvaluationContext): boolean {
   // An empty string is not an identity, here or anywhere else in evaluation.
   const key = readTargetingKey(context);
 
   if (key !== undefined) {
-    if (holds(segment.excluded, key)) return false;
-    if (holds(segment.included, key)) return true;
+    if (segment.excluded.has(key)) return false;
+    if (segment.included.has(key)) return true;
   }
 
-  for (const rule of rulesOf(segment)) {
+  for (const rule of segment.rules) {
     // The same rule as flag targeting applies: an empty condition list means
     // "everyone", so a rule carrying no list at all must not be read as one.
+    // The compiler validates that a segment has rules, not what is in them.
     if (!Array.isArray(rule.conditions)) continue;
     if (matchesConditions(rule.conditions, context)) return true;
   }
 
   return false;
-}
-
-/** Set membership that tolerates a segment the compiler never saw. */
-function holds(keys: ReadonlySet<string>, key: string): boolean {
-  return keys instanceof Set && keys.has(key);
-}
-
-const NO_RULES: readonly SegmentRule[] = [];
-
-/**
- * The rule list of a segment that may never have been compiled.
- *
- * `Array.isArray` narrows an already-typed list to `any[]` and takes the
- * element type with it, so the assertion putting it back is confined here
- * rather than spread across the loop that uses it.
- */
-function rulesOf(segment: Segment): readonly SegmentRule[] {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  return Array.isArray(segment.rules) ? (segment.rules as readonly SegmentRule[]) : NO_RULES;
 }
 
 type SegmentCondition = Extract<Condition, { operator: 'inSegment' | 'notInSegment' }>;
@@ -193,12 +190,21 @@ type SegmentCondition = Extract<Condition, { operator: 'inSegment' | 'notInSegme
  * it, and `notInSegment` refuses to match rather than turning the rule on for
  * everyone it was written to exclude. Proven membership in a resolvable
  * segment still decides the condition either way.
+ *
+ * A condition whose `segments` is not a list at all names nothing resolvable,
+ * so it is the same answer: neither operator matches. Checked rather than
+ * trusted to the type, like every other list the matcher walks — a hand-built
+ * condition missing the field would otherwise throw out of the one module
+ * documented to fail closed, and take the whole flag down to an ERROR result
+ * over a single malformed rule.
  */
 function matchesSegmentCondition(
   condition: SegmentCondition,
   context: EvaluationContext,
   segments?: SegmentMap,
 ): boolean {
+  if (!namesSegments(condition)) return false;
+
   let member = false;
   let unresolved = false;
 
@@ -216,6 +222,17 @@ function matchesSegmentCondition(
 
   if (condition.operator === 'inSegment') return member;
   return !member && !unresolved;
+}
+
+/**
+ * Whether the condition's segment list really is a list.
+ *
+ * A plain boolean rather than a type predicate: `Array.isArray` narrows an
+ * already-typed list to `any[]` and takes the element type with it, so the
+ * caller would end up walking `any` keys.
+ */
+function namesSegments(condition: SegmentCondition): boolean {
+  return Array.isArray(condition.segments);
 }
 
 function isSegmentCondition(condition: Condition): condition is SegmentCondition {

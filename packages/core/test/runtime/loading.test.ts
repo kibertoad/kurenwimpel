@@ -70,6 +70,35 @@ describe('provider lifecycle', () => {
     await third;
   });
 
+  it('shares one load between init and a concurrent refresh', async () => {
+    // Two loads in flight at once resolve in whatever order the network
+    // decides, and the second to arrive wins. `init` used to go straight to
+    // the provider, so the coalescing guarantee held only among refreshes and
+    // a slow first load could install its snapshot over a newer one.
+    let resolveLoad: ((snapshot: FlagSnapshot) => void) | undefined;
+    let calls = 0;
+    const slow: FlagProvider = {
+      name: 'slow',
+      load: () => {
+        calls += 1;
+        return new Promise((resolve) => {
+          resolveLoad = resolve;
+        });
+      },
+    };
+
+    const client = new FeatureFlagClient({ provider: slow });
+    const refreshed = client.refresh();
+    const started = client.init();
+
+    expect(calls).toBe(1);
+    resolveLoad?.(createSnapshot(flags));
+
+    await expect(started).resolves.toBeUndefined();
+    expect(await refreshed).toBe(true);
+    expect(client.getBoolean('new-checkout', false)).toBe(true);
+  });
+
   it('keeps the previous snapshot when the provider reports no change', async () => {
     const unchanging: FlagProvider = {
       name: 'unchanging',

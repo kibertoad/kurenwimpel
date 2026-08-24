@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  FlagParseError,
-  parseFlagDefinitions,
-  parseRuleset,
-  parseSegmentDefinition,
-} from '../../src/index.js';
+import { parseFlagDefinitions, parseRuleset } from '../../src/index.js';
 
 const validFlag = {
   key: 'new-checkout',
@@ -25,41 +20,6 @@ const validSegment = {
     },
   ],
 };
-
-describe('parseSegmentDefinition', () => {
-  it('accepts lists and rules', () => {
-    expect(parseSegmentDefinition(validSegment)).toEqual(validSegment);
-  });
-
-  it('accepts a pure key-list segment', () => {
-    const parsed = parseSegmentDefinition({ key: 's', included: ['a'], excluded: ['b'] });
-    expect(parsed).toEqual({ key: 's', included: ['a'], excluded: ['b'] });
-  });
-
-  it.each([
-    ['a non-object', 7],
-    ['a missing key', { included: ['a'] }],
-    ['an empty segment', { key: 's' }],
-    // Presence is not content: two empty sets and no rules match nobody,
-    // forever, so every inSegment naming it matches nobody and every
-    // notInSegment matches everybody — with nothing to explain why.
-    ['a segment whose only list is empty', { key: 's', included: [] }],
-    ['a segment whose lists and rules are all empty', { key: 's', excluded: [], rules: [] }],
-    ['a non-string key list', { key: 's', included: [1] }],
-    ['a rule without conditions', { key: 's', rules: [{ id: 'r', conditions: [] }] }],
-  ])('rejects %s', (_label, input) => {
-    expect(() => parseSegmentDefinition(input)).toThrow(FlagParseError);
-  });
-
-  it('rejects segment operators inside segment rules — membership does not nest', () => {
-    expect(() =>
-      parseSegmentDefinition({
-        key: 's',
-        rules: [{ id: 'r', conditions: [{ operator: 'inSegment', segments: ['other'] }] }],
-      }),
-    ).toThrow(/does not nest/u);
-  });
-});
 
 describe('parseFlagDefinitions', () => {
   it('reads an array and a key-to-definition object', () => {

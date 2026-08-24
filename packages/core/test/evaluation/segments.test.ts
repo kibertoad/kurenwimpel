@@ -6,7 +6,7 @@ import { isCompiledSegment } from '../../src/evaluation/segments.js';
 const hand = (overrides: Record<string, unknown>): Segment =>
   ({ key: 'beta', ...overrides }) as unknown as Segment;
 import { compileSegment, createSnapshot, isInSegment } from '../../src/index.js';
-import type { Segment, SegmentDefinition } from '../../src/index.js';
+import type { Segment, SegmentDefinition, SegmentRule } from '../../src/index.js';
 
 describe('compileSegment', () => {
   it('compiles key lists to sets and defaults the rest', () => {
@@ -27,6 +27,43 @@ describe('compileSegment', () => {
     expect(compiled.included.has('u1')).toBe(true);
     expect(compiled.excluded).toBeInstanceOf(Set);
     expect(compiled.rules).toEqual([]);
+  });
+
+  it('copies the rule list rather than aliasing the definition', () => {
+    // A snapshot promises an immutable, point-in-time view. Held by reference,
+    // a later push into the caller's array changed who a live snapshot matched.
+    const rules: SegmentRule[] = [
+      { id: 'pro', conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }] },
+    ];
+    const snapshot = createSnapshot([], {}, [{ key: 'beta', rules }]);
+
+    rules.push({ id: 'free', conditions: [{ attribute: 'plan', operator: 'eq', value: 'free' }] });
+
+    const stored = snapshot.segments.get('beta')!;
+    expect(stored.rules).toHaveLength(1);
+    expect(isInSegment(stored, { plan: 'free' })).toBe(false);
+  });
+
+  it('copies a key list that arrives as a Set', () => {
+    const included = new Set(['u1']);
+    const compiled = compileSegment({ key: 'beta', included } as unknown as SegmentDefinition);
+
+    included.add('u2');
+
+    expect(compiled.included.has('u1')).toBe(true);
+    expect(compiled.included.has('u2')).toBe(false);
+  });
+
+  it('reads any iterable key list, including a Set from another realm', () => {
+    // A cross-realm Set fails `instanceof` while being exactly what it claims,
+    // and used to compile to nothing at all — every key silently dropped.
+    const foreign = { [Symbol.iterator]: (): Iterator<string> => ['u1'][Symbol.iterator]() };
+    const compiled = compileSegment({
+      key: 'beta',
+      included: foreign,
+    } as unknown as SegmentDefinition);
+
+    expect(compiled.included.has('u1')).toBe(true);
   });
 
   it('fails closed on a key list that is not a list', () => {

@@ -325,25 +325,7 @@ describe('rollouts', () => {
   });
 });
 
-describe('a split never serves weight nobody asked for', () => {
-  it('leaves a zero-weight bucket unserved for every subject', () => {
-    // The float-drift fallback used to return the last bucket outright, which
-    // can be one an operator parked at zero precisely so it would never ship.
-    const flag: FlagDefinition<boolean> = {
-      ...booleanFlag,
-      rollout: [
-        { variant: 'on', weight: 100 },
-        { variant: 'off', weight: 0 },
-      ],
-    };
-
-    const served = new Set(
-      users(5_000).map((key) => evaluateFlag(flag, { targetingKey: key }).variant),
-    );
-
-    expect(served).toEqual(new Set(['on']));
-  });
-
+describe('a split buckets only on an identity the context owns', () => {
   it('buckets on the targeting key only when the context owns it', () => {
     // An inherited key must not decide a split: the identity that drives
     // bucketing goes through the same own-property read as every condition.

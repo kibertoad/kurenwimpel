@@ -115,19 +115,47 @@ describe('parseFlagDefinition', () => {
     ).toThrow(/unknown variant/u);
   });
 
-  it('rejects an unsupported operator', () => {
-    expect(() =>
-      parseFlagDefinition({
+  it('drops a rule using an unsupported operator and keeps serving the flag', () => {
+    // An operator a newer control plane knows says nothing about the rest of
+    // the definition. Rejecting the flag over it answers FLAG_NOT_FOUND for
+    // every SDK; the rule could never have matched anyway, so dropping it
+    // decides nothing differently.
+    const warnings: FlagParseIssue[] = [];
+    const parsed = parseFlagDefinition(
+      {
         ...valid,
         rules: [
           {
-            id: 'r',
-            conditions: [{ attribute: 'a', operator: 'regex', value: '.*' }],
+            id: 'newer',
+            conditions: [{ attribute: 'a', operator: 'matchesGlob', value: '*' }],
+            variant: 'on',
+          },
+          {
+            id: 'known',
+            conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }],
             variant: 'on',
           },
         ],
+      },
+      warnings,
+    );
+
+    expect(parsed.rules?.map((rule) => rule.id)).toEqual(['known']);
+    expect(warnings).toEqual([
+      { at: valid.key, message: expect.stringMatching(/unsupported operator matchesGlob/u) },
+    ]);
+  });
+
+  it('still rejects everything else about a rule', () => {
+    // Only the unknown operator is survivable; a malformed value, a dangling
+    // variant, or a missing conditions array is a defect in a rule this
+    // version does understand, and still costs the definition.
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rules: [{ id: 'r', conditions: [{ attribute: 'a', operator: 'gt', value: 'x' }] }],
       }),
-    ).toThrow(/unsupported operator/u);
+    ).toThrow(/finite number value/u);
   });
 
   it('rejects an operator whose value has the wrong type', () => {
@@ -242,6 +270,21 @@ describe('parseFlagDefinition', () => {
     expect(() => parseFlagDefinition({ ...valid, metadata: { nested: {} } })).toThrow(
       /metadata nested/u,
     );
+  });
+
+  it('rejects a non-finite metadata number, like every other numeric field', () => {
+    // Metadata travels out on every result and every impression, and
+    // JSON.stringify writes a NaN or an Infinity as `null` on the OFREP wire —
+    // an unserveable annotation found at the protocol layer instead of here.
+    for (const rollout of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parseFlagDefinition({ ...valid, metadata: { rollout } })).toThrow(
+        /metadata rollout must be a boolean, string, or finite number/u,
+      );
+    }
+
+    expect(parseFlagDefinition({ ...valid, metadata: { rollout: 42 } }).metadata).toEqual({
+      rollout: 42,
+    });
   });
 });
 

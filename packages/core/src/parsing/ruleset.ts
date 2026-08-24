@@ -8,7 +8,7 @@
 import type { FlagDefinition } from '../model/flag.js';
 import type { SegmentDefinition } from '../model/segment.js';
 import { parseFlagDefinition } from './flag.js';
-import { isRecord } from './primitives.js';
+import { isKeyedDefinition, isRecord } from './primitives.js';
 import type { FlagParseIssue } from './primitives.js';
 import { checkCrossReferences } from './references.js';
 import { parseSegmentDefinition } from './segment.js';
@@ -128,14 +128,10 @@ function checkDocumentKeys(raw: Record<string, unknown>): FlagParseIssue[] {
  * carry alongside.
  */
 function holdsDefinitions(value: unknown): boolean {
-  if (isDefinition(value)) return true;
+  if (isKeyedDefinition(value)) return true;
   if (isRecord(value)) return holdsDefinitions(Object.values(value));
   if (!Array.isArray(value) || value.length === 0) return false;
-  return value.every((entry: unknown) => isDefinition(entry));
-}
-
-function isDefinition(value: unknown): boolean {
-  return isRecord(value) && typeof value['key'] === 'string';
+  return value.every((entry: unknown) => isKeyedDefinition(entry));
 }
 
 function emptyFlags(): ParseFlagsResult {
@@ -227,7 +223,7 @@ function parseEach<T extends { readonly key: string }>(
       parsed.push(definition);
     } catch (error) {
       issues.push({
-        at: isRecord(entry) && typeof entry['key'] === 'string' ? entry['key'] : at,
+        at: isKeyedDefinition(entry) ? entry.key : at,
         message: error instanceof Error ? error.message : String(error),
       });
     }

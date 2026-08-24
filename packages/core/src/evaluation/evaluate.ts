@@ -21,11 +21,12 @@ import type { FlagDefinition, Prerequisite } from '../model/flag.js';
 import type { FlagValue } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
+import { isKeyedDefinition } from '../parsing/primitives.js';
 import { drawAllocation, settledAllocation } from './bucketing.js';
 import { matchesConditions, readTargetingKey } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
-import { compileTargets } from './targets.js';
+import { foldedTargets } from './targets.js';
 import type { TargetIndex } from './targets.js';
 
 /**
@@ -134,8 +135,10 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   // Hand-built call sites reach the entry point too, so its arguments have to
   // survive being wrong. Checked ahead of the `try` rather than inside it: the
   // catch below names the flag in every error it reports, and something that
-  // is not a definition has no name to report one under.
-  if (!isDefinitionLike(flag)) return unusableDefinition();
+  // is not a definition has no name to report one under. Through the parser's
+  // own predicate rather than a second copy of it — written out twice, the two
+  // had already drifted over whether an array counts.
+  if (!isKeyedDefinition(flag)) return unusableDefinition();
 
   try {
     return evaluateGuarded(flag, contextOf(context), environment, memo);
@@ -150,11 +153,6 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
     const detail = error instanceof Error ? error.message : String(error);
     return invalidDefinition(flag, `Flag "${flag.key}" is not a usable definition: ${detail}`);
   }
-}
-
-/** Whether a value is enough of a definition to evaluate, or at least to name. */
-function isDefinitionLike(flag: unknown): boolean {
-  return typeof flag === 'object' && flag !== null && 'key' in flag && typeof flag.key === 'string';
 }
 
 /**
@@ -321,7 +319,11 @@ function checkPrerequisites<T extends FlagValue>(
     const dependency = environment.flags?.get(prerequisite.flag);
     if (dependency === undefined) return prerequisiteFailed(flag, prerequisite);
 
-    const outcome = evaluateDependency(dependency, context, environment, chain);
+    const outcome = tryDependency(dependency, context, environment, chain);
+
+    // A dependency that could not be evaluated at all is a dependency that does
+    // not hold — the plainest case of the rule the next block states.
+    if (outcome === undefined) return prerequisiteFailed(flag, prerequisite);
 
     // A structurally broken dependency graph is reported as such, not disguised
     // as an ordinary failed prerequisite.
@@ -374,6 +376,44 @@ function chainFrom(key: string, trail: PrerequisiteTrail | undefined): Prerequis
   return { visiting: new Set([key]), memo: trail ?? new Map() };
 }
 
+/**
+ * One dependency, evaluated behind a guard of its own. `undefined` means it
+ * could not be evaluated at all.
+ *
+ * A dependency that throws is the dependency's defect, and charging it to the
+ * flag that merely names one is the wrong diagnosis in both directions.
+ * Unguarded, the throw unwound past every dependent to {@link evaluateFlag},
+ * which reported the flag the caller *asked* for as "not a usable definition"
+ * — so one hand-built flag with a broken shape made every flag above it look
+ * broken too, and each of them answered with no value at all, sending every
+ * SDK to its own hardcoded default instead of to the off variant its gate
+ * called for. ADR 0006 is explicit that a dependency erroring is a dependency
+ * that does not hold: PREREQUISITE_FAILED, off variant, fail closed.
+ *
+ * The depth error is the one exception and is rethrown untouched. Depth is a
+ * property of the walk rather than of the flag it stops at, so it is reported
+ * against the flag that was actually asked for; see
+ * {@link PrerequisiteDepthError}.
+ *
+ * Nothing is memoised for a throwing dependency — the memo holds evaluation
+ * outcomes, and this is the absence of one. A dependency broken this way is
+ * hand-built only (the parser cannot emit one) and re-throwing it per dependent
+ * costs far less than a memo entry every other reader would have to interpret.
+ */
+function tryDependency(
+  dependency: FlagDefinition,
+  context: EvaluationContext,
+  environment: EvaluationEnvironment,
+  chain: PrerequisiteChain,
+): EvaluationResult | undefined {
+  try {
+    return evaluateDependency(dependency, context, environment, chain);
+  } catch (error) {
+    if (error instanceof PrerequisiteDepthError) throw error;
+    return undefined;
+  }
+}
+
 /** One dependency, evaluated at most once per request. See {@link PrerequisiteTrail}. */
 function evaluateDependency(
   dependency: FlagDefinition,
@@ -405,11 +445,12 @@ function matchTarget(
 
   // A snapshot has folded every flag's targets into one lookup, so the request
   // path is a single probe however many keys are listed. A flag reaching here
-  // without one — evaluated directly, outside a snapshot — is folded on the
-  // spot rather than scanned by a second copy of the same rules: which target
-  // claims a key, and what a target whose `keys` is not a list matches, are
-  // decided in `compileTargets` and nowhere else.
-  const compiled = index?.get(flag.key) ?? compileTargets(flag);
+  // without one — evaluated directly, outside a snapshot, or left out of the
+  // index because it targets nobody — is folded through the memo rather than
+  // scanned by a second copy of the same rules: which target claims a key, and
+  // what a target whose `keys` is not a list matches, are decided in
+  // `compileTargets` and nowhere else, and the fold is paid once either way.
+  const compiled = index?.get(flag.key) ?? foldedTargets(flag);
   return compiled?.get(targetingKey);
 }
 

@@ -44,8 +44,13 @@ therefore never recurses and can never cycle — there is no segment analogue
 of the prerequisite cycle guard because the shape makes cycles inexpressible.
 
 **Fail closed.** An unknown segment key, or a snapshot with no segments at
-all, makes `inSegment` false (and `notInSegment` true — it is a negation, not
-a second lookup). Split returns the `control` treatment when a server SDK
+all, makes membership undecidable — and _both_ operators answer false, because
+`notInSegment` is a fail-closed operator rather than the bare negation of
+`inSegment`. Reading it as a negation would turn a rule written to exclude a
+cohort into one that matches everybody the moment the segment failed to
+resolve, which is the one failure mode a rollout system must not have.
+Membership proven against a segment that _does_ resolve still decides the
+condition either way. Split returns the `control` treatment when a server SDK
 meets a large segment it cannot evaluate; here the flag simply proceeds to
 its later, non-matching branches.
 

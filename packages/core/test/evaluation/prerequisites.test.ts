@@ -40,6 +40,31 @@ describe('prerequisites', () => {
     });
   });
 
+  it('fails closed when the dependency is not a usable definition at all', () => {
+    // The dependency's defect is the dependency's. Unguarded, its throw unwound
+    // past every dependent to the flag the caller actually asked for and
+    // reported *that* one as invalid — so the dependent served no value where
+    // its gate called for the off variant. ADR 0006: a dependency that cannot
+    // be evaluated is a dependency that does not hold.
+    const broken = { ...flag('new-backend'), variants: null } as unknown as FlagDefinition;
+    const environment = environmentOf(dependent, broken);
+
+    expect(evaluateFlag(dependent, { targetingKey: 'u1' }, environment)).toMatchObject({
+      key: 'checkout-redesign',
+      value: false,
+      variant: 'off',
+      reason: 'PREREQUISITE_FAILED',
+      failedPrerequisite: 'new-backend',
+    });
+
+    // Asked for on its own, the broken flag still reports itself as broken.
+    expect(evaluateFlag(broken, { targetingKey: 'u1' }, environment)).toMatchObject({
+      key: 'new-backend',
+      reason: 'ERROR',
+      errorCode: 'INVALID_DEFINITION',
+    });
+  });
+
   it('fails when the prerequisite is disabled, even if its off variant is listed', () => {
     const gated = flag('gated', { prerequisites: [{ flag: 'dep', variants: ['off'] }] });
     const environment = environmentOf(gated, flag('dep', { enabled: false }));

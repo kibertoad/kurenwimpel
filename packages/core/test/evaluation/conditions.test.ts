@@ -184,6 +184,17 @@ describe('segments', () => {
     expect(matchesCondition(mixed, { targetingKey: 'someone' }, segments)).toBe(false);
   });
 
+  it('fails closed when a segment condition carries no segment list at all', () => {
+    // Hand-built, or cast from JSON that lost the field. Walking it threw out
+    // of the one module documented to fail closed; see the evaluateFlag test
+    // for what that did to the rest of the flag.
+    const missing = { operator: 'inSegment' } as unknown as Condition;
+    const negated = { operator: 'notInSegment' } as unknown as Condition;
+
+    expect(matchesCondition(missing, { targetingKey: 'user-in' }, segments)).toBe(false);
+    expect(matchesCondition(negated, { targetingKey: 'user-in' }, segments)).toBe(false);
+  });
+
   it('matches any of several segment keys', () => {
     const condition: Condition = { operator: 'inSegment', segments: ['ghost', 'beta-testers'] };
     expect(matchesCondition(condition, { targetingKey: 'user-in' }, segments)).toBe(true);

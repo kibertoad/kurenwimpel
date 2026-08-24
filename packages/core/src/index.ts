@@ -62,7 +62,7 @@ export type { ParsedVersion } from './evaluation/semver.js';
 export { parseCondition } from './parsing/condition.js';
 export { parseFlagDefinition } from './parsing/flag.js';
 export { FlagParseError } from './parsing/primitives.js';
-export type { FlagParseIssue } from './parsing/primitives.js';
+export type { FlagParseIssue, ParseFailureScope } from './parsing/primitives.js';
 export { parseFlagDefinitions, parseRuleset, parseSegmentDefinitions } from './parsing/ruleset.js';
 export type {
   ParseFlagsResult,

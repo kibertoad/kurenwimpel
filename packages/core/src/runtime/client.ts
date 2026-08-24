@@ -98,7 +98,7 @@ export class FeatureFlagClient {
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
   #environment: EvaluationEnvironment = environmentOf(EMPTY_SNAPSHOT);
   #ready = false;
-  #refreshInFlight: Promise<boolean> | undefined;
+  #loadInFlight: Promise<LoadOutcome> | undefined;
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
@@ -127,17 +127,18 @@ export class FeatureFlagClient {
    * Unlike {@link FeatureFlagClient.refresh}, this rethrows: a service that
    * cannot read its flags at startup should fail to start rather than serve
    * every request on fallback values.
+   *
+   * Shares the in-flight load with {@link FeatureFlagClient.refresh} rather
+   * than opening one of its own. Going straight to the provider here left the
+   * ordering guarantee holding only among refreshes: a `refresh()` and an
+   * `init()` in the same tick ran two loads, and whichever resolved second
+   * installed its snapshot — so the slower, older one could roll the client
+   * backward. `PollingFlagClient.start()` awaits `init()` with nothing
+   * stopping a caller from refreshing alongside it.
    */
   async init(): Promise<void> {
-    const loaded = await this.#provider.load();
-
-    // `null` means "unchanged since the snapshot I gave you", and the first
-    // load hands over nothing to compare against — so there is no snapshot to
-    // keep serving. Coming up ready on an empty one would answer every lookup
-    // with FLAG_NOT_FOUND, which is the failure this method exists to prevent.
-    if (loaded === null) throw this.#noFirstRuleset();
-
-    this.#install(loaded);
+    const outcome = await this.#load();
+    if (outcome.status === 'failed') throw outcome.error;
   }
 
   /**
@@ -159,33 +160,56 @@ export class FeatureFlagClient {
    *
    * @returns whether a new snapshot was installed.
    */
-  refresh(): Promise<boolean> {
-    this.#refreshInFlight ??= this.#runRefresh().finally(() => {
-      this.#refreshInFlight = undefined;
-    });
-    return this.#refreshInFlight;
+  async refresh(): Promise<boolean> {
+    const outcome = await this.#load();
+
+    // Reported rather than thrown — including the "no ruleset at all" answer a
+    // `refresh` before `init` can reach, which `init` refuses to start on.
+    // Returning a bare `false` for that one would read as "nothing to
+    // install", when in fact nothing has ever been installed and every lookup
+    // is about to be answered PROVIDER_NOT_READY.
+    if (outcome.status === 'failed') this.#report(outcome.error, 'load');
+
+    return outcome.status === 'installed';
   }
 
-  async #runRefresh(): Promise<boolean> {
+  /**
+   * The one path to the provider, shared by everything that wants a load.
+   *
+   * Whoever asks while a load is in flight joins it instead of starting a
+   * second one, which is what keeps two loads from resolving out of order and
+   * installing the older snapshot. `init` and `refresh` differ only in what
+   * they do with the outcome.
+   */
+  #load(): Promise<LoadOutcome> {
+    this.#loadInFlight ??= this.#runLoad().finally(() => {
+      this.#loadInFlight = undefined;
+    });
+    return this.#loadInFlight;
+  }
+
+  async #runLoad(): Promise<LoadOutcome> {
     const isFirstLoad = !this.#ready;
 
     try {
       const loaded = await this.#provider.load(isFirstLoad ? undefined : this.#snapshot);
       if (loaded === null) {
-        // `refresh` before `init` performs the first load, and reaches the
-        // answer `init` refuses to start on. It cannot throw at its caller, but
-        // returning a bare `false` would read as "nothing to install", when in
-        // fact nothing has ever been installed and every lookup is about to be
-        // answered PROVIDER_NOT_READY.
-        if (isFirstLoad) this.#report(this.#noFirstRuleset(), 'load');
-        return false;
+        // `null` means "unchanged since the snapshot I gave you". On the first
+        // load nothing was handed over to be unchanged from, so there is no
+        // snapshot to keep serving: coming up ready on an empty one would
+        // answer every lookup FLAG_NOT_FOUND.
+        return isFirstLoad
+          ? { status: 'failed', error: this.#noFirstRuleset() }
+          : { status: 'unchanged' };
       }
 
       this.#install(loaded);
-      return true;
+      return { status: 'installed' };
     } catch (error) {
-      this.#report(error, 'load');
-      return false;
+      // Carried as thrown rather than normalised here: `init` rethrows it at
+      // its caller, and a service catching its own provider's error type
+      // should still find it. `#report` does the normalising.
+      return { status: 'failed', error };
     }
   }
 
@@ -422,8 +446,17 @@ export class FeatureFlagClient {
     }
   }
 
-  #mergeContext(context: EvaluationContext | undefined): EvaluationContext {
-    if (context === undefined) return this.#defaultContext;
+  /**
+   * The context an evaluation actually runs against: the defaults, with
+   * whatever the call said about them applied over the top.
+   *
+   * An explicit `null` reads as "no per-call context", exactly as omitting one
+   * does. A JavaScript caller can pass it, the getters are documented never to
+   * throw, and `evaluateFlag` already absorbs the same mistake one layer down
+   * — this used to throw out of `Object.entries` before ever reaching it.
+   */
+  #mergeContext(context: EvaluationContext | null | undefined): EvaluationContext {
+    if (context === undefined || context === null) return this.#defaultContext;
 
     // Null prototype: an own `__proto__` key in a JSON-parsed context must
     // land as plain data, never reach the Object.prototype setter and inject
@@ -431,14 +464,22 @@ export class FeatureFlagClient {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
     const merged = Object.create(null) as Record<string, AttributeValue | undefined>;
 
+    for (const [attribute, value] of this.#defaultEntries) {
+      merged[attribute] = value;
+    }
+
     // A default survives only where the call said nothing about the attribute.
     // Naming it with an explicit `undefined` is how a caller says "this request
-    // has no stage", which it otherwise has no way to express.
-    for (const [attribute, value] of this.#defaultEntries) {
-      if (!Object.hasOwn(context, attribute)) merged[attribute] = value;
-    }
+    // has no stage", which it otherwise has no way to express — so one walk of
+    // one list drives both the clearing and the overwriting. Deciding which
+    // defaults to skip with `Object.hasOwn` while copying the values with
+    // `Object.entries` let the two disagree: a non-enumerable own attribute —
+    // an accessor on a class instance, a proxy-backed request object —
+    // suppressed the default without supplying anything in its place, and
+    // targeting saw neither.
     for (const [attribute, value] of Object.entries(context)) {
-      if (value !== undefined) merged[attribute] = value;
+      if (value === undefined) delete merged[attribute];
+      else merged[attribute] = value;
     }
 
     return merged;
@@ -451,6 +492,15 @@ export class FeatureFlagClient {
     });
   }
 }
+
+/**
+ * What one trip to the provider came back with. "Unchanged" and "failed" are
+ * kept apart because the first is a healthy answer and the second is not.
+ */
+type LoadOutcome =
+  | { readonly status: 'installed' }
+  | { readonly status: 'unchanged' }
+  | { readonly status: 'failed'; readonly error: unknown };
 
 /** The lookups evaluation needs from a snapshot, in the shape it wants them. */
 function environmentOf(snapshot: FlagSnapshot): EvaluationEnvironment {

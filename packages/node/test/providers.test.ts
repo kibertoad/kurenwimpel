@@ -142,15 +142,29 @@ describe('HttpFlagProvider', () => {
     expect(await provider.load(createSnapshot([], { version: 'rev-1' }))).toBeNull();
   });
 
-  it('rejects a 304 answering a request that carried no validator', async () => {
-    // Nothing was asked, so "unchanged" answers nothing — and on a first load
-    // reporting it as unchanged would leave the client with no ruleset at all.
+  it('rejects a 304 answering the very first request', async () => {
+    // Nothing was asked, so "unchanged" answers nothing — and with no snapshot
+    // behind it, reporting it as unchanged leaves the client with no ruleset.
     const provider = new HttpFlagProvider({
       url: 'https://flags.test/current',
       fetch: () => Promise.resolve(new Response(null, { status: 304 })),
     });
 
     await expect(provider.load()).rejects.toThrow(/unconditional request/u);
+  });
+
+  it('treats a 304 as unchanged whenever there is a snapshot to keep serving', async () => {
+    // A control plane that stops stamping ETags leaves the snapshot versionless,
+    // so no If-None-Match goes out — and a caching proxy can still answer 304.
+    // Keying the rejection off the validator rather than off "is there a
+    // snapshot at all" turned that into an onError on every single poll,
+    // forever, for a client that was serving exactly the right flags.
+    const provider = new HttpFlagProvider({
+      url: 'https://flags.test/current',
+      fetch: () => Promise.resolve(new Response(null, { status: 304 })),
+    });
+
+    expect(await provider.load(createSnapshot([]))).toBeNull();
   });
 
   it('throws on a non-ok response', async () => {
