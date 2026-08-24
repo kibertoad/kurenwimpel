@@ -79,11 +79,15 @@ export const BUCKET_COUNT = 10_000;
  * no choice of salt, seed, rule id, or bucketing key — including ones that
  * contain a delimiter themselves — can make two distinct decision tuples
  * share a hash input.
+ *
+ * The bucketing key is passed separately rather than appended by the caller:
+ * it is always the last part, and taking it here saves copying the domain
+ * array on every draw.
  */
-function encodeDomain(parts: readonly string[]): string {
+function encodeDomain(parts: readonly string[], bucketingKey: string): string {
   let encoded = '';
   for (const part of parts) encoded += `${part.length}:${part}`;
-  return encoded;
+  return `${encoded}${bucketingKey.length}:${bucketingKey}`;
 }
 
 /**
@@ -94,7 +98,7 @@ function encodeDomain(parts: readonly string[]): string {
  * them in the tail of every other.
  */
 export function bucketOf(domain: readonly string[], bucketingKey: string): number {
-  return murmurHash3(encodeDomain([...domain, bucketingKey])) % BUCKET_COUNT;
+  return murmurHash3(encodeDomain(domain, bucketingKey)) % BUCKET_COUNT;
 }
 
 /**
@@ -111,8 +115,8 @@ export function isAllocated(
   salt: string,
   bucketingKey: string,
 ): boolean {
-  if (allocation.percent >= 100) return true;
-  if (allocation.percent <= 0) return false;
+  const settled = settledAllocation(allocation);
+  if (settled !== undefined) return settled;
 
   const domain =
     allocation.seed === undefined ? ['allocation', salt] : ['allocation', salt, allocation.seed];
@@ -121,4 +125,19 @@ export function isAllocated(
   // rounding keeps float drift from admitting one extra bucket (0.07 / 100 *
   // 10 000 is 7.000000000000001).
   return bucketOf(domain, bucketingKey) < Math.round((allocation.percent / 100) * BUCKET_COUNT);
+}
+
+/**
+ * The gate's verdict when the percentage alone settles it: everyone in at 100,
+ * everyone out at 0. `undefined` means the gate has to draw a bucket — and only
+ * then does it need an identity to draw against.
+ *
+ * Evaluation asks this before resolving a bucketing key, so parking a flag at 0
+ * or finishing an experiment at 100 does not start demanding a targeting key
+ * from contexts that never needed one.
+ */
+export function settledAllocation(allocation: TrafficAllocation): boolean | undefined {
+  if (allocation.percent >= 100) return true;
+  if (allocation.percent <= 0) return false;
+  return undefined;
 }

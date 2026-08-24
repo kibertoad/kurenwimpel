@@ -23,6 +23,49 @@ describe('traffic allocation', () => {
     ],
   };
 
+  it('admits everyone at 100 percent without asking for a targeting key', () => {
+    const finished: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      allocation: { percent: 100 },
+      rules: [
+        {
+          id: 'pro',
+          conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }],
+          variant: 'on',
+        },
+      ],
+    };
+
+    // A gate that admits everyone hashes nothing, so it needs no identity to
+    // hash. Demanding one would break every anonymous or service-context
+    // lookup the moment a finished experiment is ramped to 100.
+    expect(evaluateFlag(finished, { plan: 'pro' })).toMatchObject({
+      value: true,
+      variant: 'on',
+      reason: 'TARGETING_MATCH',
+      ruleId: 'pro',
+    });
+    expect(evaluateFlag(finished, { plan: 'free' })).toMatchObject({
+      variant: 'off',
+      reason: 'STATIC',
+    });
+  });
+
+  it('excludes everyone at 0 percent without asking for a targeting key', () => {
+    const parked: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      allocation: { percent: 0 },
+      rules: [{ id: 'all', conditions: [], variant: 'on' }],
+    };
+
+    expect(evaluateFlag(parked, { plan: 'pro' })).toMatchObject({
+      value: false,
+      variant: 'off',
+      reason: 'NOT_ALLOCATED',
+    });
+    expect(evaluateFlag(parked, { plan: 'pro' }).errorCode).toBeUndefined();
+  });
+
   it('serves NOT_ALLOCATED outside the allocation and SPLIT inside it', () => {
     const keys = users(10_000);
     const results = keys.map((key) => evaluateFlag(experiment, { targetingKey: key }));

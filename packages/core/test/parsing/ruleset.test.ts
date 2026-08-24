@@ -117,4 +117,123 @@ describe('parseRuleset', () => {
     expect(result.segments).toHaveLength(1);
     expect(result.issues.map((issue) => issue.at)).toEqual(['broken', 'empty']);
   });
+
+  it('reads an explicit null side as absent rather than malformed', () => {
+    // A control plane that serialises an empty segment set as null should not
+    // draw a parse issue on every refresh.
+    const result = parseRuleset({ flags: [validFlag], segments: null });
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.segments).toEqual([]);
+    expect(result.issues).toEqual([]);
+    expect(parseRuleset({ flags: null, segments: [validSegment] }).issues).toEqual([]);
+  });
+});
+
+describe('parseRuleset duplicate keys', () => {
+  it('keeps the first definition of a repeated flag key and reports the rest', () => {
+    // A snapshot is indexed by key, so the second would silently delete the
+    // first. Which one ends up live must not come down to array order.
+    const result = parseRuleset([validFlag, { ...validFlag, enabled: false }]);
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.flags[0]?.enabled).toBe(true);
+    expect(result.issues).toEqual([
+      { at: 'new-checkout', message: 'flag new-checkout is defined more than once' },
+    ]);
+  });
+
+  it('reports a repeated segment key the same way', () => {
+    const result = parseRuleset({ flags: [], segments: [validSegment, validSegment] });
+
+    expect(result.segments).toHaveLength(1);
+    expect(result.issues).toEqual([
+      { at: 'beta-testers', message: 'segment beta-testers is defined more than once' },
+    ]);
+  });
+});
+
+describe('parseRuleset cross-references', () => {
+  const gated = {
+    ...validFlag,
+    key: 'gated',
+    prerequisites: [{ flag: 'new-checkout', variants: ['on'] }],
+  };
+
+  it('accepts references that resolve', () => {
+    expect(parseRuleset({ flags: [validFlag, gated], segments: [] }).issues).toEqual([]);
+  });
+
+  it('reports a prerequisite that is not in the ruleset', () => {
+    const result = parseRuleset([
+      { ...gated, prerequisites: [{ flag: 'gone', variants: ['on'] }] },
+    ]);
+
+    // The flag is kept: it already fails closed at evaluation, and dropping it
+    // would answer FLAG_NOT_FOUND and send every SDK to its own default.
+    expect(result.flags).toHaveLength(1);
+    expect(result.issues).toEqual([
+      { at: 'gated', message: 'flag gated: prerequisite gone is not in this ruleset' },
+    ]);
+  });
+
+  it('reports a prerequisite variant the dependency does not have', () => {
+    const typo = { ...gated, prerequisites: [{ flag: 'new-checkout', variants: ['onn'] }] };
+    const result = parseRuleset([validFlag, typo]);
+
+    expect(result.issues).toEqual([
+      {
+        at: 'gated',
+        message: 'flag gated: prerequisite new-checkout lists unknown variant onn',
+      },
+    ]);
+  });
+
+  it('reports a rule referencing a segment key the ruleset does not define', () => {
+    const flag = {
+      ...validFlag,
+      rules: [
+        {
+          id: 'beta',
+          conditions: [{ operator: 'inSegment', segments: ['beta-tester'] }],
+          variant: 'on',
+        },
+      ],
+    };
+    const result = parseRuleset({ flags: [flag], segments: [validSegment] });
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.issues).toEqual([
+      {
+        at: 'new-checkout',
+        message: 'flag new-checkout: rule beta references unknown segment beta-tester',
+      },
+    ]);
+
+    // Spelled right, it resolves.
+    const fixed = {
+      ...flag,
+      rules: [
+        { ...flag.rules[0], conditions: [{ operator: 'inSegment', segments: ['beta-testers'] }] },
+      ],
+    };
+    expect(parseRuleset({ flags: [fixed], segments: [validSegment] }).issues).toEqual([]);
+  });
+
+  it('stays quiet about segments when the payload declares no segment side', () => {
+    // A bare flag array may well have its segments loaded from elsewhere.
+    const flag = {
+      ...validFlag,
+      rules: [
+        {
+          id: 'beta',
+          conditions: [{ operator: 'inSegment', segments: ['loaded-elsewhere'] }],
+          variant: 'on',
+        },
+      ],
+    };
+
+    expect(parseRuleset([flag]).issues).toEqual([]);
+    expect(parseRuleset({ flags: [flag] }).issues).toEqual([]);
+  });
 });

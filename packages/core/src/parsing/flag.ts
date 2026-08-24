@@ -42,7 +42,10 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
   if (typeof enabled !== 'boolean') fail(`flag ${key}: enabled must be a boolean`);
 
   const variants = parseVariants(raw['variants'], key);
-  const variantNames = Object.keys(variants);
+  // A set, not the array of names: every target, rule, and bucket below probes
+  // it, so a flag with many variants would otherwise cost a linear scan per
+  // reference on every refresh.
+  const variantNames = new Set(Object.keys(variants));
 
   const defaultVariant = requireString(raw['defaultVariant'], `flag ${key}: defaultVariant`);
   const offVariant = requireString(raw['offVariant'], `flag ${key}: offVariant`);
@@ -51,7 +54,7 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
     ['defaultVariant', defaultVariant],
     ['offVariant', offVariant],
   ] as const) {
-    if (!variantNames.includes(variant)) {
+    if (!variantNames.has(variant)) {
       fail(`flag ${key}: ${field} points at unknown variant ${variant}`);
     }
   }
@@ -148,7 +151,7 @@ function parsePrerequisites(raw: unknown, key: string): Prerequisite[] | undefin
 function parseTargets(
   raw: unknown,
   key: string,
-  variantNames: readonly string[],
+  variantNames: ReadonlySet<string>,
 ): VariantTarget[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) fail(`flag ${key}: targets must be an array`);
@@ -159,7 +162,7 @@ function parseTargets(
     if (!isRecord(entry)) fail(`flag ${key}: target ${index} must be an object`);
 
     const variant = requireString(entry['variant'], `flag ${key}: target ${index} variant`);
-    if (!variantNames.includes(variant)) {
+    if (!variantNames.has(variant)) {
       fail(`flag ${key}: target points at unknown variant ${variant}`);
     }
 
@@ -199,7 +202,7 @@ function parseAllocation(raw: unknown, key: string): TrafficAllocation | undefin
 function parseRules(
   raw: unknown,
   key: string,
-  variantNames: readonly string[],
+  variantNames: ReadonlySet<string>,
 ): TargetingRule[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (!Array.isArray(raw)) fail(`flag ${key}: rules must be an array`);
@@ -229,7 +232,7 @@ function parseRules(
 
     if (variantRaw !== undefined) {
       const name = requireString(variantRaw, `${where} variant`);
-      if (!variantNames.includes(name)) {
+      if (!variantNames.has(name)) {
         fail(`${where} points at unknown variant ${name}`);
       }
     }
@@ -251,7 +254,7 @@ function parseRules(
 function parseRollout(
   raw: unknown,
   where: string,
-  variantNames: readonly string[],
+  variantNames: ReadonlySet<string>,
 ): Rollout | undefined {
   if (raw === undefined || raw === null) return undefined;
 
@@ -282,7 +285,7 @@ function parseRollout(
 function parseBuckets(
   raw: readonly unknown[],
   where: string,
-  variantNames: readonly string[],
+  variantNames: ReadonlySet<string>,
 ): RolloutBucket[] {
   let total = 0;
 
@@ -290,7 +293,7 @@ function parseBuckets(
     if (!isRecord(entry)) fail(`${where}: rollout bucket ${index} must be an object`);
 
     const variant = requireString(entry['variant'], `${where}: rollout bucket ${index} variant`);
-    if (!variantNames.includes(variant)) {
+    if (!variantNames.has(variant)) {
       fail(`${where}: rollout points at unknown variant ${variant}`);
     }
 

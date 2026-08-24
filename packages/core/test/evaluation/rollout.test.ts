@@ -181,6 +181,22 @@ describe('rollouts', () => {
     expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
   });
 
+  it('needs no targeting key to fall through a parked split', () => {
+    // A split with no weight resolves to nothing whoever the subject is, so it
+    // never reaches the hash. Pausing an experiment must not start erroring
+    // every context that has no targeting key.
+    const result = evaluateFlag({
+      ...booleanFlag,
+      rollout: [
+        { variant: 'on', weight: 0 },
+        { variant: 'off', weight: 0 },
+      ],
+    });
+
+    expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
+    expect(result.errorCode).toBeUndefined();
+  });
+
   it('treats a weight total that overflows to Infinity as unusable', () => {
     // Hand-built flags bypass the parser; the split must not silently route
     // every subject to the last bucket.
@@ -281,5 +297,30 @@ describe('rollouts', () => {
       reason: 'STATIC',
       ruleId: 'parked-experiment',
     });
+  });
+
+  it('lets a rule rollout decide even when the rule also names a variant', () => {
+    // The rollout wins whenever a rule declares one. Parking it at zero is how
+    // an experiment is paused, and that must not ship the fixed variant to
+    // everyone the rule matches.
+    const rule = {
+      id: 'experiment',
+      conditions: [],
+      variant: 'on',
+      rollout: [
+        { variant: 'on', weight: 0 },
+        { variant: 'off', weight: 0 },
+      ],
+    };
+
+    expect(
+      evaluateFlag({ ...booleanFlag, rules: [rule] }, { targetingKey: 'user-1' }),
+    ).toMatchObject({ value: false, variant: 'off', reason: 'STATIC', ruleId: 'experiment' });
+
+    // Unparked, the rollout still decides — the fixed variant never applies.
+    const running = { ...rule, rollout: [{ variant: 'off', weight: 100 }] };
+    expect(
+      evaluateFlag({ ...booleanFlag, rules: [running] }, { targetingKey: 'user-1' }),
+    ).toMatchObject({ value: false, variant: 'off', reason: 'SPLIT', ruleId: 'experiment' });
   });
 });

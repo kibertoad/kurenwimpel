@@ -1,7 +1,7 @@
 import { evaluateFlag } from '../evaluation/evaluate.js';
 import type { EvaluationEnvironment } from '../evaluation/evaluate.js';
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
-import type { FlagMetadata } from '../model/flag.js';
+import type { FlagDefinition, FlagMetadata } from '../model/flag.js';
 import type { FlagValue, JsonObject } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
@@ -243,8 +243,9 @@ export class FeatureFlagClient {
   /** Raw evaluation, without the type check that the typed getters apply. */
   evaluate(key: string, context?: EvaluationContext): EvaluationResult {
     const merged = this.#mergeContext(context);
-    const result = this.#resolve(key, merged);
-    this.#impress(result, merged);
+    const flag = this.#snapshot.flags.get(key);
+    const result = this.#resolve(key, flag, merged);
+    this.#impress(result, merged, flag);
     return result;
   }
 
@@ -270,14 +271,19 @@ export class FeatureFlagClient {
 
     for (const flag of this.#snapshot.flags.values()) {
       const result = evaluateFlag(flag, merged, this.#environment);
-      if (options?.impressions === true) this.#impress(result, merged);
+      if (options?.impressions === true) this.#impress(result, merged, flag);
       results.push(result);
     }
 
     return results;
   }
 
-  #resolve(key: string, context: EvaluationContext): EvaluationResult {
+  /** The definition is passed in, not looked up again: see {@link FeatureFlagClient.#impress}. */
+  #resolve(
+    key: string,
+    flag: FlagDefinition | undefined,
+    context: EvaluationContext,
+  ): EvaluationResult {
     if (!this.#ready) {
       return {
         key,
@@ -288,8 +294,6 @@ export class FeatureFlagClient {
         errorMessage: `Client for provider "${this.#provider.name}" has not loaded flags yet`,
       };
     }
-
-    const flag = this.#snapshot.flags.get(key);
 
     if (flag === undefined) {
       return {
@@ -312,9 +316,10 @@ export class FeatureFlagClient {
     isExpectedType: (value: FlagValue) => value is T,
   ): ResolvedEvaluation<T> {
     const merged = this.#mergeContext(context);
-    const result = this.#resolve(key, merged);
+    const flag = this.#snapshot.flags.get(key);
+    const result = this.#resolve(key, flag, merged);
     const final = this.#coerce(result, defaultValue, isExpectedType);
-    this.#impress(final, merged);
+    this.#impress(final, merged, flag);
     return final;
   }
 
@@ -342,10 +347,20 @@ export class FeatureFlagClient {
     return { ...result, value: result.value };
   }
 
-  #impress(result: EvaluationResult, context: EvaluationContext): void {
+  /**
+   * The definition is handed over by the caller rather than looked up here:
+   * every call site has just resolved it, and `evaluateAll` is already
+   * iterating the definitions it would otherwise re-probe the map for, once per
+   * flag in the ruleset.
+   */
+  #impress(
+    result: EvaluationResult,
+    context: EvaluationContext,
+    flag: FlagDefinition | undefined,
+  ): void {
     if (this.#onImpression === undefined) return;
 
-    const flagVersion = this.#snapshot.flags.get(result.key)?.version;
+    const flagVersion = flag?.version;
 
     try {
       this.#onImpression({

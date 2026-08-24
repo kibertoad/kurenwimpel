@@ -17,19 +17,14 @@
  */
 
 import type { EvaluationContext } from '../model/context.js';
-import type {
-  FlagDefinition,
-  Prerequisite,
-  Rollout,
-  RolloutBucket,
-  RolloutSplit,
-} from '../model/flag.js';
+import type { FlagDefinition, Prerequisite } from '../model/flag.js';
 import type { FlagValue } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
-import { BUCKET_COUNT, bucketOf, isAllocated } from './bucketing.js';
+import { isAllocated, settledAllocation } from './bucketing.js';
 import { matchesConditions } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
+import { bucketingKeyFor, pickVariant } from './rollout.js';
 import type { TargetIndex } from './targets.js';
 
 /**
@@ -60,6 +55,10 @@ const MAX_PREREQUISITE_DEPTH = 50;
  * chain of depth n costs 2^n, and a control plane can turn a single lookup into
  * seconds of CPU. Every entry was computed against the same context, which is
  * fixed for the whole walk.
+ *
+ * Built on the first flag that actually declares a prerequisite, and passed as
+ * `undefined` until then: most flags have no dependencies at all, and a Set and
+ * a Map allocated per lookup would be pure waste on the request path.
  */
 interface PrerequisiteWalk {
   /** The flags on the current chain. Meeting one of them again is a cycle. */
@@ -74,10 +73,7 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   environment: EvaluationEnvironment = {},
 ): EvaluationResult<T> {
   try {
-    return evaluateGuarded(flag, context, environment, {
-      visiting: new Set([flag.key]),
-      memo: new Map(),
-    });
+    return evaluateGuarded(flag, context, environment);
   } catch (error) {
     // The no-throw contract has to hold for definitions that never went through
     // the parser too. A shape it would have rejected degrades to an ERROR
@@ -87,12 +83,15 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   }
 }
 
-/** The pipeline body; `walk` carries the prerequisite chain and its memo. */
+/**
+ * The pipeline body; `walk` carries the prerequisite chain and its memo, and is
+ * `undefined` until some flag on the chain declares a prerequisite.
+ */
 function evaluateGuarded<T extends FlagValue>(
   flag: FlagDefinition<T>,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
-  walk: PrerequisiteWalk,
+  walk?: PrerequisiteWalk,
 ): EvaluationResult<T> {
   if (!flag.enabled) return resolve(flag, flag.offVariant, EvaluationReason.Disabled);
 
@@ -104,21 +103,14 @@ function evaluateGuarded<T extends FlagValue>(
 
   const salt = flag.salt ?? flag.key;
 
-  if (flag.allocation !== undefined) {
-    // The same identity rule as every split: a present, non-empty key.
-    const { bucketBy } = flag.allocation;
-    const allocationKey = bucketingKeyFor(bucketBy, context);
-    if (allocationKey === undefined) return bucketingKeyMissing(flag, bucketBy ?? 'targetingKey');
-    if (!isAllocated(flag.allocation, salt, allocationKey)) {
-      return resolve(flag, flag.defaultVariant, EvaluationReason.NotAllocated);
-    }
-  }
+  const gated = checkAllocation(flag, context, salt);
+  if (gated !== undefined) return gated;
 
   const ruled = matchRule(flag, context, environment, salt);
   if (ruled !== undefined) return ruled;
 
   if (flag.rollout !== undefined) {
-    const picked = pickVariant(flag.rollout, ['rollout', salt], context);
+    const picked = pickVariant(flag.rollout, context, salt);
     if (picked.missingAttribute !== undefined) {
       return bucketingKeyMissing(flag, picked.missingAttribute);
     }
@@ -131,6 +123,38 @@ function evaluateGuarded<T extends FlagValue>(
 }
 
 /**
+ * The traffic-allocation gate. Returns the result to serve when the subject is
+ * outside the exposed slice or cannot be bucketed at all, `undefined` when it
+ * is admitted and evaluation should carry on.
+ *
+ * An identity is resolved only if the gate actually hashes one. A fully open or
+ * fully closed allocation is decided by its percentage alone, and demanding a
+ * key regardless would make finishing an experiment at 100 — or parking one at
+ * 0 — answer TARGETING_KEY_MISSING for every anonymous or service context, on
+ * rules that never needed bucketing.
+ */
+function checkAllocation<T extends FlagValue>(
+  flag: FlagDefinition<T>,
+  context: EvaluationContext,
+  salt: string,
+): EvaluationResult<T> | undefined {
+  const allocation = flag.allocation;
+  if (allocation === undefined) return undefined;
+
+  const settled = settledAllocation(allocation);
+  if (settled === true) return undefined;
+  if (settled === false) return resolve(flag, flag.defaultVariant, EvaluationReason.NotAllocated);
+
+  // The same identity rule as every split: a present, non-empty key.
+  const { bucketBy } = allocation;
+  const key = bucketingKeyFor(bucketBy, context);
+  if (key === undefined) return bucketingKeyMissing(flag, bucketBy ?? 'targetingKey');
+
+  if (isAllocated(allocation, salt, key)) return undefined;
+  return resolve(flag, flag.defaultVariant, EvaluationReason.NotAllocated);
+}
+
+/**
  * The outcome of the first rule whose conditions all match, or `undefined` when
  * none did.
  *
@@ -138,6 +162,10 @@ function evaluateGuarded<T extends FlagValue>(
  * parked experiment — serves the flag's default variant; letting it fall
  * through would silently promote the next rule to production the moment an
  * experiment is paused.
+ *
+ * A rule that declares both a rollout and a fixed variant is decided by the
+ * rollout, parked or not, for the same reason: pausing an experiment must not
+ * ship the fixed variant to everyone the rule matches.
  */
 function matchRule<T extends FlagValue>(
   flag: FlagDefinition<T>,
@@ -152,13 +180,13 @@ function matchRule<T extends FlagValue>(
     if (!matchesConditions(rule.conditions, context, environment.segments)) continue;
 
     if (rule.rollout !== undefined) {
-      const picked = pickVariant(rule.rollout, ['rule', salt, rule.id], context);
+      const picked = pickVariant(rule.rollout, context, salt, rule.id);
       if (picked.missingAttribute !== undefined) {
         return bucketingKeyMissing(flag, picked.missingAttribute, rule.id);
       }
-      if (picked.variant !== undefined) {
-        return resolve(flag, picked.variant, EvaluationReason.Split, rule.id);
-      }
+      return picked.variant === undefined
+        ? resolve(flag, flag.defaultVariant, EvaluationReason.Static, rule.id)
+        : resolve(flag, picked.variant, EvaluationReason.Split, rule.id);
     }
 
     if (rule.variant !== undefined) {
@@ -182,17 +210,24 @@ function checkPrerequisites<T extends FlagValue>(
   flag: FlagDefinition<T>,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
-  walk: PrerequisiteWalk,
+  walk: PrerequisiteWalk | undefined,
 ): EvaluationResult<T> | undefined {
-  if (walk.visiting.size > MAX_PREREQUISITE_DEPTH) {
+  const prerequisites = flag.prerequisites;
+  if (prerequisites === undefined || prerequisites.length === 0) return undefined;
+
+  // The root of the walk: its own key has to be on the chain, or a hand-built
+  // flag naming itself would recurse instead of being reported as a cycle.
+  const chain: PrerequisiteWalk = walk ?? { visiting: new Set([flag.key]), memo: new Map() };
+
+  if (chain.visiting.size > MAX_PREREQUISITE_DEPTH) {
     return invalidDefinition(
       flag,
       `Flag "${flag.key}" sits more than ${MAX_PREREQUISITE_DEPTH} prerequisites deep`,
     );
   }
 
-  for (const prerequisite of flag.prerequisites ?? []) {
-    if (walk.visiting.has(prerequisite.flag)) {
+  for (const prerequisite of prerequisites) {
+    if (chain.visiting.has(prerequisite.flag)) {
       return invalidDefinition(
         flag,
         `Flag "${flag.key}" has a prerequisite cycle through "${prerequisite.flag}"`,
@@ -200,11 +235,9 @@ function checkPrerequisites<T extends FlagValue>(
     }
 
     const dependency = environment.flags?.get(prerequisite.flag);
-    if (dependency === undefined || !dependency.enabled) {
-      return prerequisiteFailed(flag, prerequisite);
-    }
+    if (dependency === undefined) return prerequisiteFailed(flag, prerequisite);
 
-    const outcome = evaluateDependency(dependency, context, environment, walk);
+    const outcome = evaluateDependency(dependency, context, environment, chain);
 
     // A structurally broken dependency graph is reported as such, not disguised
     // as an ordinary failed prerequisite.
@@ -218,6 +251,7 @@ function checkPrerequisites<T extends FlagValue>(
     if (
       outcome.errorCode !== undefined ||
       outcome.variant === undefined ||
+      isGatedOff(outcome.reason) ||
       !prerequisite.variants.includes(outcome.variant)
     ) {
       return prerequisiteFailed(flag, prerequisite);
@@ -225,6 +259,20 @@ function checkPrerequisites<T extends FlagValue>(
   }
 
   return undefined;
+}
+
+/**
+ * Whether a dependency is serving what it serves because it was gated off,
+ * rather than because targeting chose it.
+ *
+ * A closed gate upstream has to close everything under it. Without this, a
+ * prerequisite that lists the dependency's off variant — a reasonable thing to
+ * write — would be satisfied by a dependency that is itself switched off, and
+ * whether it was switched off by `enabled: false` or by its own failed
+ * prerequisite would decide the answer, for the very same served variant.
+ */
+function isGatedOff(reason: EvaluationReason): boolean {
+  return reason === EvaluationReason.Disabled || reason === EvaluationReason.PrerequisiteFailed;
 }
 
 /** One dependency, evaluated at most once per request. See {@link PrerequisiteWalk}. */
@@ -266,87 +314,6 @@ function matchTarget(
   return flag.targets.find(
     (target) => Array.isArray(target.keys) && target.keys.includes(targetingKey),
   )?.variant;
-}
-
-interface PickOutcome {
-  readonly variant?: string;
-  /** Set when the attribute the split buckets on is absent from the context. */
-  readonly missingAttribute?: string;
-}
-
-/** Resolves a split — either wire form — to a variant name. */
-function pickVariant(
-  rollout: Rollout,
-  domain: readonly string[],
-  context: EvaluationContext,
-): PickOutcome {
-  const split = isSplitObject(rollout) ? rollout : { buckets: rollout };
-  if (!Array.isArray(split.buckets) || split.buckets.length === 0) return {};
-
-  const key = bucketingKeyFor(split.bucketBy, context);
-  if (key === undefined) return { missingAttribute: split.bucketBy ?? 'targetingKey' };
-
-  const seeded = split.seed === undefined ? domain : [...domain, split.seed];
-  const variant = pickFromRollout(split.buckets, seeded, key);
-  return variant === undefined ? {} : { variant };
-}
-
-/**
- * Tells the two wire forms of a split apart.
- *
- * Not being an array is the discriminant. Testing for a `buckets` property
- * instead would wrap a hand-built `{ bucketBy }` — which has no buckets at all
- * — into a split whose bucket list is that very object.
- */
-function isSplitObject(rollout: Rollout): rollout is RolloutSplit {
-  return !Array.isArray(rollout);
-}
-
-/** The identity a split hashes: the targeting key, or the `bucketBy` attribute. */
-function bucketingKeyFor(
-  bucketBy: string | undefined,
-  context: EvaluationContext,
-): string | undefined {
-  const raw =
-    bucketBy === undefined
-      ? context.targetingKey
-      : Object.hasOwn(context, bucketBy)
-        ? context[bucketBy]
-        : undefined;
-  if (typeof raw === 'string' && raw.length > 0) return raw;
-  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
-  return undefined;
-}
-
-/**
- * Picks a variant from a weighted split.
- *
- * Weights are relative: `[{a, 1}, {b, 3}]` is a 25/75 split. Returns
- * `undefined` when the split carries no usable weight — all-zero, or a total
- * that overflows to Infinity (hand-built flags bypass the parser).
- */
-export function pickFromRollout(
-  buckets: readonly RolloutBucket[],
-  domain: readonly string[],
-  bucketingKey: string,
-): string | undefined {
-  let total = 0;
-  for (const bucket of buckets) {
-    if (bucket.weight > 0) total += bucket.weight;
-  }
-  if (total <= 0 || !Number.isFinite(total)) return undefined;
-
-  const point = (bucketOf(domain, bucketingKey) / BUCKET_COUNT) * total;
-
-  let cumulative = 0;
-  for (const bucket of buckets) {
-    if (bucket.weight <= 0) continue;
-    cumulative += bucket.weight;
-    if (point < cumulative) return bucket.variant;
-  }
-
-  // Only reachable through floating-point drift at the very top of the range.
-  return buckets.at(-1)?.variant;
 }
 
 function resolve<T extends FlagValue>(

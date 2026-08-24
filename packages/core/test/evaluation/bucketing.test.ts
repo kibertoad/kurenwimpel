@@ -22,6 +22,16 @@ describe('bucketOf', () => {
     expect(bucketOf(['rollout', 'flag'], 'user-1')).toBe(bucketOf(['rollout', 'flag'], 'user-1'));
   });
 
+  it('assigns the buckets it has always assigned', () => {
+    // Golden values. The whole point of the module is that a subject lands in
+    // the same bucket on every runtime and in every version, so a change to the
+    // domain encoding — however harmless it looks — must fail here rather than
+    // silently reshuffle every live experiment.
+    expect(bucketOf(['rollout', 'checkout'], 'user-1')).toBe(4236);
+    expect(bucketOf(['rule', 'checkout', 'beta'], 'user-1')).toBe(7682);
+    expect(bucketOf(['allocation', 'checkout', 'run-2'], 'user-1')).toBe(1829);
+  });
+
   it('stays inside the bucket range', () => {
     for (let index = 0; index < 500; index++) {
       const bucket = bucketOf(['rollout', 'flag'], `user-${index}`);

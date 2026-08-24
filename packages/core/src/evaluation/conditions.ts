@@ -9,7 +9,7 @@
 
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
 import type { Condition } from '../model/flag.js';
-import type { Segment } from '../model/segment.js';
+import type { Segment, SegmentRule } from '../model/segment.js';
 import { compareVersions } from './semver.js';
 
 export type SegmentMap = ReadonlyMap<string, Segment>;
@@ -21,6 +21,21 @@ export function matchesConditions(
   segments?: SegmentMap,
 ): boolean {
   return conditions.every((condition) => matchesCondition(condition, context, segments));
+}
+
+/**
+ * Reads one attribute off a context.
+ *
+ * Own-property lookup: attribute names like `constructor` or `toString` must
+ * read as absent, not resolve to Object.prototype members. Every read of a
+ * context goes through here, so the rule holds for the attribute a split
+ * buckets on exactly as it does for the ones conditions test.
+ */
+export function readAttribute(
+  context: EvaluationContext,
+  attribute: string,
+): AttributeValue | undefined {
+  return Object.hasOwn(context, attribute) ? context[attribute] : undefined;
 }
 
 /**
@@ -39,11 +54,7 @@ export function matchesCondition(
     return matchesSegmentCondition(condition, context, segments);
   }
 
-  // Own-property lookup: attribute names like `constructor` or `toString`
-  // must read as absent, not resolve to Object.prototype members.
-  const actual = Object.hasOwn(context, condition.attribute)
-    ? context[condition.attribute]
-    : undefined;
+  const actual = readAttribute(context, condition.attribute);
 
   switch (condition.operator) {
     case 'exists': {
@@ -96,17 +107,47 @@ export function matchesCondition(
  * `included`, which wins over the rules. Segment rules are matched without a
  * segment map on purpose — membership never recurses (the parser rejects
  * segment operators inside segments, and a hand-built one fails closed here).
+ *
+ * This is exported, so it also meets segments that reached evaluation without
+ * the compiler: every field is checked for the shape it claims rather than
+ * trusted to the type, and one that does not have it fails closed.
  */
 export function isInSegment(segment: Segment, context: EvaluationContext): boolean {
   const key = context.targetingKey;
 
   // An empty string is not an identity, here or anywhere else in evaluation.
   if (typeof key === 'string' && key.length > 0) {
-    if (segment.excluded.has(key)) return false;
-    if (segment.included.has(key)) return true;
+    if (holds(segment.excluded, key)) return false;
+    if (holds(segment.included, key)) return true;
   }
 
-  return segment.rules.some((rule) => matchesConditions(rule.conditions, context));
+  for (const rule of rulesOf(segment)) {
+    // The same rule as flag targeting applies: an empty condition list means
+    // "everyone", so a rule carrying no list at all must not be read as one.
+    if (!Array.isArray(rule.conditions)) continue;
+    if (matchesConditions(rule.conditions, context)) return true;
+  }
+
+  return false;
+}
+
+/** Set membership that tolerates a segment the compiler never saw. */
+function holds(keys: ReadonlySet<string>, key: string): boolean {
+  return keys instanceof Set && keys.has(key);
+}
+
+const NO_RULES: readonly SegmentRule[] = [];
+
+/**
+ * The rule list of a segment that may never have been compiled.
+ *
+ * `Array.isArray` narrows an already-typed list to `any[]` and takes the
+ * element type with it, so the assertion putting it back is confined here
+ * rather than spread across the loop that uses it.
+ */
+function rulesOf(segment: Segment): readonly SegmentRule[] {
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return Array.isArray(segment.rules) ? (segment.rules as readonly SegmentRule[]) : NO_RULES;
 }
 
 type SegmentCondition = Extract<Condition, { operator: 'inSegment' | 'notInSegment' }>;

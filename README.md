@@ -84,10 +84,11 @@ a caller gets is decided, in order:
 4. Outside the **traffic allocation** → `defaultVariant`, reason
    `NOT_ALLOCATED`. `allocation: { percent: 20 }` admits 20% of traffic into
    the rules and rollouts; everyone else never reaches them.
-5. The first **rule** whose conditions all match → its `variant`, or its
-   `rollout`. That first match decides; nothing below it is consulted, so a rule
+5. The first **rule** whose conditions all match → its `rollout`, else its
+   `variant`. That first match decides; nothing below it is consulted, so a rule
    whose rollout is parked at zero serves `defaultVariant` rather than handing
-   the subject to the next rule.
+   the subject to the next rule — or falling back to a fixed `variant` the same
+   rule happens to declare.
 6. The flag's own `rollout`, if no rule matched.
 7. `defaultVariant`, reason `STATIC`.
 
@@ -246,7 +247,14 @@ fails.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
 - A **malformed flag or segment** is dropped and reported through
-  `onParseIssues`; the rest of the ruleset still loads.
+  `onParseIssues`; the rest of the ruleset still loads. A key defined twice
+  keeps the first definition and reports the rest, rather than letting array
+  order decide which one goes live.
+- A **dangling reference** — a prerequisite naming a flag or variant that is not
+  in the payload, an `inSegment` naming a segment that is not — is reported but
+  kept. Each one already fails closed at evaluation, and dropping the flag would
+  answer `FLAG_NOT_FOUND` and send every SDK to its own hardcoded default
+  instead.
 - **Per-flag evaluation** never throws. Unknown key, missing variant, wrong
   type, absent targeting key, a prerequisite cycle, or a hand-built definition
   the parser never saw all return the caller's default plus an `errorCode` on

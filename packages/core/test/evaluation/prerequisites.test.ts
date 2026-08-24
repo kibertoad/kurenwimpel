@@ -47,6 +47,27 @@ describe('prerequisites', () => {
     expect(evaluateFlag(gated, {}, environment).reason).toBe('PREREQUISITE_FAILED');
   });
 
+  it('closes a flag whose dependency is itself gated off by a failed prerequisite', () => {
+    // c is the kill switch. b depends on it and so serves its off variant; a
+    // lists that off variant, which must not count as b vouching for anything.
+    // Which of the two ways b got switched off must not decide the answer.
+    const c = flag('c', { enabled: false });
+    const b = flag('b', { prerequisites: [{ flag: 'c', variants: ['on'] }] });
+    const a = flag('a', { prerequisites: [{ flag: 'b', variants: ['off'] }] });
+    const environment = environmentOf(a, b, c);
+
+    expect(evaluateFlag(b, {}, environment)).toMatchObject({
+      variant: 'off',
+      reason: 'PREREQUISITE_FAILED',
+    });
+    expect(evaluateFlag(a, {}, environment)).toMatchObject({
+      value: false,
+      variant: 'off',
+      reason: 'PREREQUISITE_FAILED',
+      failedPrerequisite: 'b',
+    });
+  });
+
   it('fails when the prerequisite flag is missing, or no environment was given', () => {
     expect(evaluateFlag(dependent, {}, environmentOf(dependent)).reason).toBe(
       'PREREQUISITE_FAILED',

@@ -37,8 +37,9 @@ export type { Segment, SegmentDefinition, SegmentRule } from './model/segment.js
 export { BUCKET_COUNT, bucketOf, isAllocated, murmurHash3 } from './evaluation/bucketing.js';
 export { isInSegment, matchesCondition, matchesConditions } from './evaluation/conditions.js';
 export type { SegmentMap } from './evaluation/conditions.js';
-export { evaluateFlag, pickFromRollout } from './evaluation/evaluate.js';
+export { evaluateFlag } from './evaluation/evaluate.js';
 export type { EvaluationEnvironment } from './evaluation/evaluate.js';
+export { pickFromRollout } from './evaluation/rollout.js';
 export { compileSegment } from './evaluation/segments.js';
 export { buildTargetIndex, compileTargets } from './evaluation/targets.js';
 export type { TargetIndex } from './evaluation/targets.js';
