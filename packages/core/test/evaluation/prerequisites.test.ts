@@ -113,6 +113,24 @@ describe('prerequisites', () => {
     expect(evaluateFlag(selfish, {}, environmentOf(selfish)).errorCode).toBe('INVALID_DEFINITION');
   });
 
+  it('fails when the dependency errors, instead of trusting its fallback variant', () => {
+    // Without a targeting key the dependency cannot bucket; it serves its
+    // defaultVariant with an error. That fallback vouches for nothing — the
+    // gate must not open exactly for the contexts where evaluation failed.
+    const dep = flag('dep', {
+      defaultVariant: 'on',
+      rollout: [{ variant: 'off', weight: 100 }],
+    });
+    const gated = flag('gated', { prerequisites: [{ flag: 'dep', variants: ['on'] }] });
+    const environment = environmentOf(gated, dep);
+
+    expect(evaluateFlag(gated, {}, environment).reason).toBe('PREREQUISITE_FAILED');
+    // With a key the dependency actually serves 'off', which also fails.
+    expect(evaluateFlag(gated, { targetingKey: 'u1' }, environment).reason).toBe(
+      'PREREQUISITE_FAILED',
+    );
+  });
+
   it('gates before individual targets: a failed prerequisite beats a target', () => {
     const gated = flag('gated', {
       prerequisites: [{ flag: 'missing', variants: ['on'] }],

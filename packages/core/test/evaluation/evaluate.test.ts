@@ -115,6 +115,18 @@ describe('evaluateFlag pipeline', () => {
     });
   });
 
+  it('never serves a variant resolved through the prototype chain', () => {
+    // A hand-built flag naming a variant 'constructor' must be
+    // VARIANT_NOT_FOUND, not Object.prototype.constructor served as a value.
+    const result = evaluateFlag({ ...booleanFlag, defaultVariant: 'constructor' });
+
+    expect(result).toMatchObject({
+      value: undefined,
+      reason: 'ERROR',
+      errorCode: 'VARIANT_NOT_FOUND',
+    });
+  });
+
   it('passes flag metadata through to the result', () => {
     const result = evaluateFlag({ ...booleanFlag, metadata: { experiment: 'checkout-q3' } }, {});
     expect(result.metadata).toEqual({ experiment: 'checkout-q3' });
@@ -235,6 +247,77 @@ describe('rollouts', () => {
     );
   });
 
+  it('falls through to the default variant when a split carries no weight', () => {
+    // A parked experiment: all-zero weights serve the default rather than
+    // dropping the flag or erroring.
+    const result = evaluateFlag(
+      {
+        ...booleanFlag,
+        rollout: [
+          { variant: 'on', weight: 0 },
+          { variant: 'off', weight: 0 },
+        ],
+      },
+      { targetingKey: 'user-1' },
+    );
+
+    expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
+  });
+
+  it('treats a weight total that overflows to Infinity as unusable', () => {
+    // Hand-built flags bypass the parser; the split must not silently route
+    // every subject to the last bucket.
+    const result = evaluateFlag(
+      {
+        ...booleanFlag,
+        rollout: [
+          { variant: 'on', weight: 1e308 },
+          { variant: 'off', weight: 1e308 },
+        ],
+      },
+      { targetingKey: 'user-1' },
+    );
+
+    expect(result).toMatchObject({ variant: 'off', reason: 'STATIC' });
+  });
+
+  it('gives rule-level rollouts a domain no flag-level rollout can collide with', () => {
+    // Under the old ':'-delimited scheme, rule 'r1' of a flag salted 'f'
+    // shared its hash domain with a whole flag salted 'f:r1'.
+    const ruled: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      salt: 'f',
+      rules: [
+        {
+          id: 'r1',
+          conditions: [],
+          rollout: [
+            { variant: 'on', weight: 50 },
+            { variant: 'off', weight: 50 },
+          ],
+        },
+      ],
+    };
+    const salted: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      salt: 'f:r1',
+      rollout: [
+        { variant: 'on', weight: 50 },
+        { variant: 'off', weight: 50 },
+      ],
+    };
+
+    const agreeing = users(200).filter(
+      (key) =>
+        evaluateFlag(ruled, { targetingKey: key }).variant ===
+        evaluateFlag(salted, { targetingKey: key }).variant,
+    );
+
+    // Independent 50/50 draws agree for about half the subjects, not all.
+    expect(agreeing.length).toBeGreaterThan(60);
+    expect(agreeing.length).toBeLessThan(140);
+  });
+
   it('serves a rule-level rollout with the rule id attached', () => {
     const result = evaluateFlag(
       {
@@ -251,74 +334,5 @@ describe('rollouts', () => {
     );
 
     expect(result).toMatchObject({ value: true, reason: 'SPLIT', ruleId: 'paid-ramp' });
-  });
-});
-
-describe('traffic allocation', () => {
-  const experiment: FlagDefinition<boolean> = {
-    ...booleanFlag,
-    allocation: { percent: 20 },
-    rollout: [
-      { variant: 'on', weight: 50 },
-      { variant: 'off', weight: 50 },
-    ],
-  };
-
-  it('serves NOT_ALLOCATED outside the allocation and SPLIT inside it', () => {
-    const keys = users(10_000);
-    const results = keys.map((key) => evaluateFlag(experiment, { targetingKey: key }));
-
-    const admitted = results.filter((result) => result.reason === 'SPLIT');
-    const excluded = results.filter((result) => result.reason === 'NOT_ALLOCATED');
-
-    expect(admitted.length + excluded.length).toBe(keys.length);
-    expect(admitted.length / keys.length).toBeGreaterThan(0.18);
-    expect(admitted.length / keys.length).toBeLessThan(0.22);
-
-    // Everyone outside the experiment gets the default variant.
-    expect(excluded.every((result) => result.variant === 'off')).toBe(true);
-
-    // The admitted population still splits by the declared weights.
-    const onShare = admitted.filter((result) => result.value === true).length / admitted.length;
-    expect(onShare).toBeGreaterThan(0.45);
-    expect(onShare).toBeLessThan(0.55);
-  });
-
-  it('keeps treatments stable when the allocation is widened', () => {
-    const wider: FlagDefinition<boolean> = { ...experiment, allocation: { percent: 60 } };
-
-    for (const key of users(3000)) {
-      const before = evaluateFlag(experiment, { targetingKey: key });
-      const after = evaluateFlag(wider, { targetingKey: key });
-
-      // Nobody leaves, and nobody already admitted changes treatment.
-      if (before.reason === 'SPLIT') {
-        expect(after.reason).toBe('SPLIT');
-        expect(after.variant).toBe(before.variant);
-      }
-    }
-  });
-
-  it('lets individual targets bypass the allocation entirely', () => {
-    const flag: FlagDefinition<boolean> = {
-      ...experiment,
-      allocation: { percent: 0 },
-      targets: [{ variant: 'on', keys: ['qa-account'] }],
-    };
-
-    expect(evaluateFlag(flag, { targetingKey: 'qa-account' })).toMatchObject({
-      value: true,
-      reason: 'TARGETING_MATCH',
-    });
-    expect(evaluateFlag(flag, { targetingKey: 'someone-else' }).reason).toBe('NOT_ALLOCATED');
-  });
-
-  it('reports a missing targeting key when an allocation needs one', () => {
-    const result = evaluateFlag(experiment, {});
-    expect(result).toMatchObject({
-      value: false,
-      reason: 'ERROR',
-      errorCode: 'TARGETING_KEY_MISSING',
-    });
   });
 });

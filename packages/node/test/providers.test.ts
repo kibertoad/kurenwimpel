@@ -222,6 +222,30 @@ describe('PollingFlagClient', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('forwards onImpression to the underlying client', async () => {
+    // The README's exposure-feed example constructs the polling client with
+    // onImpression; the option must actually reach evaluation.
+    const onImpression = vi.fn();
+    const client = new PollingFlagClient({
+      provider: {
+        name: 'test',
+        load: () => Promise.resolve(createSnapshot(ruleset, { fetchedAt: 0 })),
+      } satisfies FlagProvider,
+      onImpression,
+    });
+
+    await client.start();
+    client.getBoolean('new-checkout', false, { targetingKey: 'user-1' });
+
+    expect(onImpression).toHaveBeenCalledOnce();
+    expect(onImpression.mock.calls[0]?.[0]).toMatchObject({
+      flagKey: 'new-checkout',
+      targetingKey: 'user-1',
+    });
+
+    await client.close();
+  });
+
   it('rejects from start when the first load fails', async () => {
     const client = new PollingFlagClient({
       provider: {

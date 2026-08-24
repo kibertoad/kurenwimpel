@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSnapshot, FeatureFlagClient, StaticProvider } from '../../src/index.js';
-import type { FlagDefinition, FlagProvider, FlagSnapshot } from '../../src/index.js';
+import type {
+  EvaluationContext,
+  FlagDefinition,
+  FlagProvider,
+  FlagSnapshot,
+} from '../../src/index.js';
 
 const flags: FlagDefinition[] = [
   {
@@ -111,6 +116,35 @@ describe('FeatureFlagClient', () => {
     expect(client.getBoolean('regional', false, { plan: 'pro', region: undefined })).toBe(true);
   });
 
+  it('keeps an own __proto__ key in a JSON-parsed context out of targeting', async () => {
+    const provider = new StaticProvider([
+      {
+        key: 'enterprise-only',
+        enabled: true,
+        variants: { on: true, off: false },
+        defaultVariant: 'off',
+        offVariant: 'off',
+        rules: [
+          {
+            id: 'paid',
+            conditions: [{ attribute: 'plan', operator: 'eq', value: 'enterprise' }],
+            variant: 'on',
+          },
+        ],
+      },
+    ]);
+    const client = new FeatureFlagClient({ provider, defaultContext: { region: 'eu' } });
+    await client.init();
+
+    // JSON.parse yields an own, enumerable '__proto__' key; merging it must
+    // not install a prototype whose attributes targeting can then read.
+    const hostile = JSON.parse(
+      '{"targetingKey":"u1","__proto__":{"plan":"enterprise"}}',
+    ) as EvaluationContext;
+
+    expect(client.getBoolean('enterprise-only', false, hostile)).toBe(false);
+  });
+
   it('applies the default context when no per-call context is given', async () => {
     const client = new FeatureFlagClient({
       provider: new StaticProvider([
@@ -188,6 +222,38 @@ describe('FeatureFlagClient', () => {
 
     expect(await client.refresh()).toBe(true);
     expect(client.getBoolean('new-checkout', true)).toBe(false);
+  });
+
+  it('coalesces overlapping refreshes so a slow load cannot roll the snapshot back', async () => {
+    let resolveLoad: ((snapshot: FlagSnapshot) => void) | undefined;
+    let calls = 0;
+    const slow: FlagProvider = {
+      name: 'slow',
+      load: () => {
+        calls += 1;
+        return new Promise((resolve) => {
+          resolveLoad = resolve;
+        });
+      },
+    };
+
+    const client = new FeatureFlagClient({ provider: slow });
+    const first = client.refresh();
+    const second = client.refresh();
+
+    // The overlapping call joins the in-flight load instead of racing it.
+    expect(calls).toBe(1);
+    resolveLoad?.(createSnapshot(flags));
+
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(client.getBoolean('new-checkout', false)).toBe(true);
+
+    // A later refresh starts a fresh load.
+    const third = client.refresh();
+    expect(calls).toBe(2);
+    resolveLoad?.(createSnapshot(flags));
+    await third;
   });
 
   it('keeps the previous snapshot when the provider reports no change', async () => {

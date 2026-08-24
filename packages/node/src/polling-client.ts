@@ -3,6 +3,7 @@ import {
   type ClientErrorInfo,
   type EvaluationContext,
   type FlagProvider,
+  type ImpressionEvent,
 } from '@kurenwimpel/core';
 
 export interface PollingFlagClientOptions {
@@ -11,6 +12,8 @@ export interface PollingFlagClientOptions {
   readonly pollIntervalMs?: number;
   readonly defaultContext?: EvaluationContext;
   readonly onError?: (error: Error, info: ClientErrorInfo) => void;
+  /** The exposure feed for experiment analysis; one event per evaluation. */
+  readonly onImpression?: (event: ImpressionEvent) => void;
 }
 
 export const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -32,6 +35,7 @@ export class PollingFlagClient extends FeatureFlagClient {
       provider: options.provider,
       ...(options.defaultContext === undefined ? {} : { defaultContext: options.defaultContext }),
       ...(options.onError === undefined ? {} : { onError: options.onError }),
+      ...(options.onImpression === undefined ? {} : { onImpression: options.onImpression }),
     });
 
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;

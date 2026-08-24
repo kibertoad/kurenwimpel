@@ -30,6 +30,32 @@ describe('matchesCondition', () => {
     );
   });
 
+  it('treats neq on a missing attribute as no match', () => {
+    // Fail closed, same as notIn: an anonymous context is not "not on free".
+    expect(check({ attribute: 'plan', operator: 'neq', value: 'free' }, {})).toBe(false);
+    expect(check({ attribute: 'plan', operator: 'neq', value: 'free' }, { plan: 'pro' })).toBe(
+      true,
+    );
+    expect(check({ attribute: 'plan', operator: 'neq', value: 'free' }, { plan: 'free' })).toBe(
+      false,
+    );
+  });
+
+  it('reads only own properties, never the prototype chain', () => {
+    // 'constructor' and 'toString' resolve on Object.prototype for any plain
+    // object; targeting must see them as absent.
+    expect(check({ attribute: 'constructor', operator: 'exists' }, {})).toBe(false);
+    expect(check({ attribute: 'toString', operator: 'notExists' }, {})).toBe(true);
+    expect(check({ attribute: 'constructor', operator: 'neq', value: 'x' }, {})).toBe(false);
+    // An own property by those names still works.
+    expect(
+      check(
+        { attribute: 'constructor', operator: 'eq', value: 'v' },
+        JSON.parse('{"constructor":"v"}') as Record<string, string>,
+      ),
+    ).toBe(true);
+  });
+
   it('handles string operators', () => {
     expect(
       check({ attribute: 'host', operator: 'contains', value: 'staging' }, { host: 'a-staging-1' }),
@@ -140,9 +166,28 @@ describe('segments', () => {
     expect(matchesCondition(condition, { targetingKey: 'user-in' })).toBe(false);
   });
 
+  it('fails notInSegment closed too: an unresolvable segment matches no one', () => {
+    // The rule was written to exclude an audience; if that audience cannot be
+    // resolved, matching everyone is the one wrong answer.
+    const condition: Condition = { operator: 'notInSegment', segments: ['ghost'] };
+    expect(matchesCondition(condition, { targetingKey: 'someone' }, segments)).toBe(false);
+    expect(matchesCondition(condition, { targetingKey: 'someone' })).toBe(false);
+
+    // Proven membership in a resolvable segment still decides it, though.
+    const mixed: Condition = { operator: 'notInSegment', segments: ['ghost', 'beta-testers'] };
+    expect(matchesCondition(mixed, { targetingKey: 'user-in' }, segments)).toBe(false);
+    // Non-member of the known segment, but 'ghost' stays undecidable: no match.
+    expect(matchesCondition(mixed, { targetingKey: 'someone' }, segments)).toBe(false);
+  });
+
   it('matches any of several segment keys', () => {
     const condition: Condition = { operator: 'inSegment', segments: ['ghost', 'beta-testers'] };
     expect(matchesCondition(condition, { targetingKey: 'user-in' }, segments)).toBe(true);
+  });
+
+  it('treats an empty targeting key as no identity for the include lists', () => {
+    const withEmpty = compileSegment({ key: 'odd', included: [''] });
+    expect(isInSegment(withEmpty, { targetingKey: '' })).toBe(false);
   });
 
   it('fails closed on a hand-built segment condition inside a segment rule', () => {
@@ -153,5 +198,13 @@ describe('segments', () => {
     });
 
     expect(isInSegment(nested, { targetingKey: 'user-in' })).toBe(false);
+
+    // The negated form must fail closed the same way, not match everyone.
+    const negated = compileSegment({
+      key: 'negated',
+      rules: [{ id: 'r', conditions: [{ operator: 'notInSegment', segments: ['beta-testers'] }] }],
+    });
+
+    expect(isInSegment(negated, { targetingKey: 'someone' })).toBe(false);
   });
 });

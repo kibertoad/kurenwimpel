@@ -30,16 +30,22 @@ browsers, the second is async — and evaluation is synchronous by contract
 non-cryptographic by intent (this is partitioning, not security), and fast —
 the hash is the whole hot-path cost of a rollout.
 
-Every decision hashes `"<domain>:<subject>"` where the domain is derived from
-the flag's salt (default: its key):
+Every decision hashes a domain tuple plus the subject. The tuple opens with a
+purpose tag and carries the flag's salt (default: its key):
 
-| Decision                  | Domain                     |
-| ------------------------- | -------------------------- |
-| Flag-level rollout        | `<salt>`                   |
-| Rule-level rollout        | `<salt>:<ruleId>`          |
-| Either, with a `seed`     | `<domain>!<seed>`          |
-| Traffic allocation        | `<salt>!allocation`        |
-| Allocation, with a `seed` | `<salt>!allocation:<seed>` |
+| Decision                  | Domain tuple                 |
+| ------------------------- | ---------------------------- |
+| Flag-level rollout        | `rollout, <salt>`            |
+| Rule-level rollout        | `rule, <salt>, <ruleId>`     |
+| Either, with a `seed`     | `<seed>` appended            |
+| Traffic allocation        | `allocation, <salt>`         |
+| Allocation, with a `seed` | `allocation, <salt>, <seed>` |
+
+The hash input is the tuple — subject included — with every part
+length-prefixed, which makes the encoding injective: no choice of salt, seed,
+or rule id, including ones containing delimiter characters (a seed literally
+`allocation`, a flag key `checkout:v2`), can make two distinct decisions share
+a hash input.
 
 Distinct domains give independent draws (property 3); the cumulative-weight
 walk inside one domain gives monotone ramps (property 2); hashing gives

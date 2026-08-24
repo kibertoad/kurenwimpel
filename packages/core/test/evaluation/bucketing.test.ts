@@ -19,12 +19,12 @@ describe('murmurHash3', () => {
 
 describe('bucketOf', () => {
   it('is stable across calls', () => {
-    expect(bucketOf('flag', 'user-1')).toBe(bucketOf('flag', 'user-1'));
+    expect(bucketOf(['rollout', 'flag'], 'user-1')).toBe(bucketOf(['rollout', 'flag'], 'user-1'));
   });
 
   it('stays inside the bucket range', () => {
     for (let index = 0; index < 500; index++) {
-      const bucket = bucketOf('flag', `user-${index}`);
+      const bucket = bucketOf(['rollout', 'flag'], `user-${index}`);
       expect(bucket).toBeGreaterThanOrEqual(0);
       expect(bucket).toBeLessThan(BUCKET_COUNT);
     }
@@ -32,7 +32,7 @@ describe('bucketOf', () => {
 
   it('decorrelates subjects across flags', () => {
     const sameBucket = Array.from({ length: 200 }, (_, index) => `user-${index}`).filter(
-      (key) => bucketOf('flag-a', key) === bucketOf('flag-b', key),
+      (key) => bucketOf(['rollout', 'flag-a'], key) === bucketOf(['rollout', 'flag-b'], key),
     );
     // Independent hashes should almost never agree over 200 subjects.
     expect(sameBucket.length).toBeLessThan(5);
@@ -43,11 +43,20 @@ describe('bucketOf', () => {
     let lowerHalf = 0;
 
     for (let index = 0; index < total; index++) {
-      if (bucketOf('spread', `subject-${index}`) < BUCKET_COUNT / 2) lowerHalf += 1;
+      if (bucketOf(['rollout', 'spread'], `subject-${index}`) < BUCKET_COUNT / 2) lowerHalf += 1;
     }
 
     expect(lowerHalf / total).toBeGreaterThan(0.47);
     expect(lowerHalf / total).toBeLessThan(0.53);
+  });
+
+  it('keeps domains injective when parts contain the delimiter', () => {
+    // Without length-prefixing, ['rule', 'f', 'r1'] and ['rule', 'f:r1']
+    // style tuples could encode to the same hash input.
+    const sameBucket = Array.from({ length: 200 }, (_, index) => `user-${index}`).filter(
+      (key) => bucketOf(['rule', 'f', 'r1'], key) === bucketOf(['rule', 'f:r1'], key),
+    );
+    expect(sameBucket.length).toBeLessThan(5);
   });
 });
 
@@ -79,11 +88,32 @@ describe('isAllocated', () => {
     // admitted population must not be biased toward low assignment buckets.
     const admitted = keys.filter((key) => isAllocated({ percent: 50 }, 'checkout', key));
     const lowAssignment = admitted.filter(
-      (key) => bucketOf('checkout', key) < BUCKET_COUNT / 2,
+      (key) => bucketOf(['rollout', 'checkout'], key) < BUCKET_COUNT / 2,
     ).length;
 
     expect(lowAssignment / admitted.length).toBeGreaterThan(0.47);
     expect(lowAssignment / admitted.length).toBeLessThan(0.53);
+  });
+
+  it('stays decorrelated even from a rollout seeded literally "allocation"', () => {
+    // The old delimiter scheme collapsed seed 'allocation' onto the gate's own
+    // domain, correlating admission with assignment.
+    const admitted = keys.filter((key) => isAllocated({ percent: 50 }, 'checkout', key));
+    const lowAssignment = admitted.filter(
+      (key) => bucketOf(['rollout', 'checkout', 'allocation'], key) < BUCKET_COUNT / 2,
+    ).length;
+
+    expect(lowAssignment / admitted.length).toBeGreaterThan(0.47);
+    expect(lowAssignment / admitted.length).toBeLessThan(0.53);
+  });
+
+  it('admits exactly the basis points a fractional percent asks for', () => {
+    // (0.07 / 100) * 10_000 is 7.000000000000001 in floats; without rounding
+    // that admits an eighth bucket — a 14% relative overshoot on the slice.
+    const seven = keys.filter((key) => isAllocated({ percent: 0.07 }, 'canary', key));
+    const admittedBuckets = new Set(seven.map((key) => bucketOf(['allocation', 'canary'], key)));
+
+    for (const bucket of admittedBuckets) expect(bucket).toBeLessThan(7);
   });
 
   it('re-draws the admitted population when the seed changes', () => {

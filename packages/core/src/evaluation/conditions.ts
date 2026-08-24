@@ -36,14 +36,14 @@ export function matchesCondition(
   segments?: SegmentMap,
 ): boolean {
   if (isSegmentCondition(condition)) {
-    const isMember = condition.segments.some((key) => {
-      const segment = segments?.get(key);
-      return segment !== undefined && isInSegment(segment, context);
-    });
-    return condition.operator === 'inSegment' ? isMember : !isMember;
+    return matchesSegmentCondition(condition, context, segments);
   }
 
-  const actual = context[condition.attribute];
+  // Own-property lookup: attribute names like `constructor` or `toString`
+  // must read as absent, not resolve to Object.prototype members.
+  const actual = Object.hasOwn(context, condition.attribute)
+    ? context[condition.attribute]
+    : undefined;
 
   switch (condition.operator) {
     case 'exists': {
@@ -56,7 +56,8 @@ export function matchesCondition(
       return actual === condition.value;
     }
     case 'neq': {
-      return actual !== condition.value;
+      // Fail closed: an absent attribute is not evidence of inequality.
+      return actual !== undefined && actual !== condition.value;
     }
     case 'in': {
       return isInList(actual, condition.value);
@@ -99,7 +100,8 @@ export function matchesCondition(
 export function isInSegment(segment: Segment, context: EvaluationContext): boolean {
   const key = context.targetingKey;
 
-  if (key !== undefined) {
+  // An empty string is not an identity, here or anywhere else in evaluation.
+  if (typeof key === 'string' && key.length > 0) {
     if (segment.excluded.has(key)) return false;
     if (segment.included.has(key)) return true;
   }
@@ -108,6 +110,38 @@ export function isInSegment(segment: Segment, context: EvaluationContext): boole
 }
 
 type SegmentCondition = Extract<Condition, { operator: 'inSegment' | 'notInSegment' }>;
+
+/**
+ * Membership across the listed segments. A segment that cannot be resolved —
+ * dropped by the parser, or no segment map at all — makes membership
+ * undecidable, so both operators fail closed: `inSegment` cannot match through
+ * it, and `notInSegment` refuses to match rather than turning the rule on for
+ * everyone it was written to exclude. Proven membership in a resolvable
+ * segment still decides the condition either way.
+ */
+function matchesSegmentCondition(
+  condition: SegmentCondition,
+  context: EvaluationContext,
+  segments?: SegmentMap,
+): boolean {
+  let member = false;
+  let unresolved = false;
+
+  for (const key of condition.segments) {
+    const segment = segments?.get(key);
+    if (segment === undefined) {
+      unresolved = true;
+      continue;
+    }
+    if (isInSegment(segment, context)) {
+      member = true;
+      break;
+    }
+  }
+
+  if (condition.operator === 'inSegment') return member;
+  return !member && !unresolved;
+}
 
 function isSegmentCondition(condition: Condition): condition is SegmentCondition {
   return condition.operator === 'inSegment' || condition.operator === 'notInSegment';

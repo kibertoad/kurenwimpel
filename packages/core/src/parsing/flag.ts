@@ -60,8 +60,21 @@ export function parseFlagDefinition(raw: unknown): FlagDefinition {
   const rules = parseRules(raw['rules'], key, variantNames);
   const rollout = parseRollout(raw['rollout'], `flag ${key}`, variantNames);
   const metadata = parseMetadata(raw['metadata'], key);
+
+  // A malformed salt or version must reject the flag, not be silently
+  // dropped — losing a salt reshuffles every split of the flag.
   const salt = raw['salt'];
+  if (salt !== undefined && salt !== null && (typeof salt !== 'string' || salt.length === 0)) {
+    fail(`flag ${key}: salt must be a non-empty string`);
+  }
   const version = raw['version'];
+  if (
+    version !== undefined &&
+    version !== null &&
+    (typeof version !== 'number' || !Number.isFinite(version))
+  ) {
+    fail(`flag ${key}: version must be a finite number`);
+  }
 
   return {
     key,
@@ -175,6 +188,9 @@ function parseAllocation(raw: unknown, key: string): TrafficAllocation | undefin
   }
 
   const seed = raw['seed'];
+  if (seed !== undefined && seed !== null && typeof seed !== 'string') {
+    fail(`flag ${key}: allocation seed must be a string`);
+  }
   return { percent, ...(typeof seed === 'string' ? { seed } : {}) };
 }
 
@@ -241,12 +257,25 @@ function parseRollout(
   }
 
   const buckets = parseBuckets(bucketsRaw, where, variantNames);
+
+  // Malformed knobs reject the flag like every other field: silently dropping
+  // a bucketBy or seed would quietly reassign the whole cohort.
   const bucketBy = raw['bucketBy'];
+  if (
+    bucketBy !== undefined &&
+    bucketBy !== null &&
+    (typeof bucketBy !== 'string' || bucketBy.length === 0)
+  ) {
+    fail(`${where}: rollout bucketBy must be a non-empty string`);
+  }
   const seed = raw['seed'];
+  if (seed !== undefined && seed !== null && typeof seed !== 'string') {
+    fail(`${where}: rollout seed must be a string`);
+  }
 
   return {
     buckets,
-    ...(typeof bucketBy === 'string' && bucketBy.length > 0 ? { bucketBy } : {}),
+    ...(typeof bucketBy === 'string' ? { bucketBy } : {}),
     ...(typeof seed === 'string' ? { seed } : {}),
   };
 }
@@ -275,7 +304,12 @@ function parseBuckets(
     return { variant, weight };
   });
 
-  if (total <= 0) fail(`${where}: rollout weights must add up to more than zero`);
+  // An all-zero split is legal — a parked experiment — and evaluation falls
+  // through to the default variant. A non-finite total is not: it would send
+  // every subject to the last bucket.
+  if (!Number.isFinite(total)) {
+    fail(`${where}: rollout weights must add up to a finite total`);
+  }
   return buckets;
 }
 

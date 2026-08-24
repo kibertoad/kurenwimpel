@@ -61,8 +61,10 @@ function evaluateGuarded<T extends FlagValue>(
   const salt = flag.salt ?? flag.key;
 
   if (flag.allocation !== undefined) {
-    if (context.targetingKey === undefined) return bucketingKeyMissing(flag, 'targetingKey');
-    if (!isAllocated(flag.allocation, salt, context.targetingKey)) {
+    // The same identity rule as every split: a present, non-empty key.
+    const allocationKey = bucketingKeyFor(undefined, context);
+    if (allocationKey === undefined) return bucketingKeyMissing(flag, 'targetingKey');
+    if (!isAllocated(flag.allocation, salt, allocationKey)) {
       return resolve(flag, flag.defaultVariant, EvaluationReason.NotAllocated);
     }
   }
@@ -71,7 +73,7 @@ function evaluateGuarded<T extends FlagValue>(
     if (!matchesConditions(rule.conditions, context, environment.segments)) continue;
 
     if (rule.rollout !== undefined) {
-      const picked = pickVariant(rule.rollout, `${salt}:${rule.id}`, context);
+      const picked = pickVariant(rule.rollout, ['rule', salt, rule.id], context);
       if (picked.missingAttribute !== undefined) {
         return bucketingKeyMissing(flag, picked.missingAttribute, rule.id);
       }
@@ -86,7 +88,7 @@ function evaluateGuarded<T extends FlagValue>(
   }
 
   if (flag.rollout !== undefined) {
-    const picked = pickVariant(flag.rollout, salt, context);
+    const picked = pickVariant(flag.rollout, ['rollout', salt], context);
     if (picked.missingAttribute !== undefined) {
       return bucketingKeyMissing(flag, picked.missingAttribute);
     }
@@ -137,7 +139,14 @@ function checkPrerequisites<T extends FlagValue>(
       return invalidDefinition(flag, outcome.errorMessage ?? 'invalid prerequisite');
     }
 
-    if (outcome.variant === undefined || !prerequisite.variants.includes(outcome.variant)) {
+    // An errored dependency serves its fallback variant, which vouches for
+    // nothing — a dependency that cannot be evaluated is a dependency that
+    // does not hold.
+    if (
+      outcome.errorCode !== undefined ||
+      outcome.variant === undefined ||
+      !prerequisite.variants.includes(outcome.variant)
+    ) {
       return prerequisiteFailed(flag, prerequisite);
     }
   }
@@ -147,7 +156,10 @@ function checkPrerequisites<T extends FlagValue>(
 
 /** The variant an individual target pins this key to, if any. */
 function matchTarget(flag: FlagDefinition, targetingKey: string | undefined): string | undefined {
-  if (targetingKey === undefined || flag.targets === undefined) return undefined;
+  // An empty string is not an identity: it cannot be individually targeted.
+  if (targetingKey === undefined || targetingKey.length === 0 || flag.targets === undefined) {
+    return undefined;
+  }
   return flag.targets.find((target) => target.keys.includes(targetingKey))?.variant;
 }
 
@@ -158,15 +170,19 @@ interface PickOutcome {
 }
 
 /** Resolves a split — either wire form — to a variant name. */
-function pickVariant(rollout: Rollout, saltBase: string, context: EvaluationContext): PickOutcome {
+function pickVariant(
+  rollout: Rollout,
+  domain: readonly string[],
+  context: EvaluationContext,
+): PickOutcome {
   const split: RolloutSplitShape = 'buckets' in rollout ? rollout : { buckets: rollout };
   if (split.buckets.length === 0) return {};
 
   const key = bucketingKeyFor(split.bucketBy, context);
   if (key === undefined) return { missingAttribute: split.bucketBy ?? 'targetingKey' };
 
-  const salt = split.seed === undefined ? saltBase : `${saltBase}!${split.seed}`;
-  const variant = pickFromRollout(split.buckets, salt, key);
+  const seeded = split.seed === undefined ? domain : [...domain, split.seed];
+  const variant = pickFromRollout(split.buckets, seeded, key);
   return variant === undefined ? {} : { variant };
 }
 
@@ -181,7 +197,12 @@ function bucketingKeyFor(
   bucketBy: string | undefined,
   context: EvaluationContext,
 ): string | undefined {
-  const raw = bucketBy === undefined ? context.targetingKey : context[bucketBy];
+  const raw =
+    bucketBy === undefined
+      ? context.targetingKey
+      : Object.hasOwn(context, bucketBy)
+        ? context[bucketBy]
+        : undefined;
   if (typeof raw === 'string' && raw.length > 0) return raw;
   if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
   return undefined;
@@ -191,20 +212,21 @@ function bucketingKeyFor(
  * Picks a variant from a weighted split.
  *
  * Weights are relative: `[{a, 1}, {b, 3}]` is a 25/75 split. Returns
- * `undefined` when the split carries no usable weight.
+ * `undefined` when the split carries no usable weight — all-zero, or a total
+ * that overflows to Infinity (hand-built flags bypass the parser).
  */
 export function pickFromRollout(
   buckets: readonly RolloutBucket[],
-  salt: string,
+  domain: readonly string[],
   bucketingKey: string,
 ): string | undefined {
   let total = 0;
   for (const bucket of buckets) {
     if (bucket.weight > 0) total += bucket.weight;
   }
-  if (total <= 0) return undefined;
+  if (total <= 0 || !Number.isFinite(total)) return undefined;
 
-  const point = (bucketOf(salt, bucketingKey) / BUCKET_COUNT) * total;
+  const point = (bucketOf(domain, bucketingKey) / BUCKET_COUNT) * total;
 
   let cumulative = 0;
   for (const bucket of buckets) {
@@ -223,7 +245,9 @@ function resolve<T extends FlagValue>(
   reason: Exclude<EvaluationReason, 'ERROR'>,
   ruleId?: string,
 ): EvaluationResult<T> {
-  const value = flag.variants[variant];
+  // Own-property lookup: a variant named `constructor` in a hand-built flag
+  // must be VARIANT_NOT_FOUND, not an Object.prototype member.
+  const value = Object.hasOwn(flag.variants, variant) ? flag.variants[variant] : undefined;
 
   if (value === undefined) {
     return {

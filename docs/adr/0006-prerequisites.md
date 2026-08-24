@@ -38,9 +38,10 @@ off variant is chosen because a prerequisite is a gate, and a closed gate
 should look like "off", not like "on but defaulted").
 
 Failure is closed in every direction: missing dependency, missing
-environment, dependency serving the wrong variant — all
-`PREREQUISITE_FAILED`. A dependency that cannot be checked is a dependency
-that does not hold.
+environment, dependency serving the wrong variant, dependency erroring (it
+cannot bucket without a targeting key, say — the fallback variant it serves
+alongside the error vouches for nothing) — all `PREREQUISITE_FAILED`. A
+dependency that cannot be checked is a dependency that does not hold.
 
 **Cycles are a config bug, reported as one.** Evaluation carries the visiting
 chain; re-entering a flag yields `ERROR` / `INVALID_DEFINITION` with the cycle

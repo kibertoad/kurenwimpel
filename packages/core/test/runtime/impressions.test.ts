@@ -74,12 +74,22 @@ describe('impressions', () => {
     const seen: ImpressionEvent[] = [];
     const client = await makeClient((event) => seen.push(event));
 
-    // greeting-style mismatch: boolean requested from a boolean flag is fine,
-    // so force a mismatch by asking for a string.
-    const value = client.getString('plain-toggle', 'fallback');
+    // Force a mismatch by asking the boolean experiment flag for a string.
+    const details = client.getStringDetails('checkout-experiment', 'fallback', {
+      targetingKey: 'user-1',
+    });
 
-    expect(value).toBe('fallback');
-    expect(seen[0]).toMatchObject({ value: 'fallback', errorCode: 'TYPE_MISMATCH' });
+    expect(details.value).toBe('fallback');
+    expect(details.errorCode).toBe('TYPE_MISMATCH');
+    // The mismatch must not strip the exposure record of its experiment join
+    // keys: metadata, variant, and version all survive.
+    expect(details.metadata).toEqual({ experiment: 'checkout-q3' });
+    expect(seen[0]).toMatchObject({
+      value: 'fallback',
+      errorCode: 'TYPE_MISMATCH',
+      metadata: { experiment: 'checkout-q3' },
+      flagVersion: 7,
+    });
   });
 
   it('never lets a throwing hook fail the evaluation, and reports it', async () => {

@@ -35,7 +35,7 @@ with reason **`NOT_ALLOCATED`** — the in-process equivalent of Split's
 `not in split` label, and exactly the signal an experiment analysis needs to
 separate "not exposed" from "exposed, got control".
 
-The gate hashes the `<salt>!allocation[:<seed>]` domain (ADR 0002), which is
+The gate hashes the `allocation`-tagged domain tuple (ADR 0002), which is
 decorrelated from every assignment domain by construction. The consequences
 are the two properties an experiment ramp needs, both pinned by tests:
 

@@ -70,6 +70,7 @@ export class FeatureFlagClient {
 
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
   #ready = false;
+  #refreshInFlight: Promise<boolean> | undefined;
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
@@ -106,11 +107,20 @@ export class FeatureFlagClient {
 
   /**
    * Reloads in the background. Swallows provider errors — reports them through
-   * `onError` and keeps the previous snapshot.
+   * `onError` and keeps the previous snapshot. Overlapping calls share one
+   * load: a slow older request must never resolve after a newer one and roll
+   * the snapshot back.
    *
    * @returns whether a new snapshot was installed.
    */
-  async refresh(): Promise<boolean> {
+  refresh(): Promise<boolean> {
+    this.#refreshInFlight ??= this.#runRefresh().finally(() => {
+      this.#refreshInFlight = undefined;
+    });
+    return this.#refreshInFlight;
+  }
+
+  async #runRefresh(): Promise<boolean> {
     try {
       const loaded = await this.#provider.load(this.#ready ? this.#snapshot : undefined);
       if (loaded === null) return false;
@@ -277,10 +287,11 @@ export class FeatureFlagClient {
     }
 
     if (!isExpectedType(result.value)) {
+      // Spread first: metadata, ruleId, and the rest must survive the
+      // mismatch, or the impression cannot be joined to its experiment.
       return {
-        key: result.key,
+        ...result,
         value: defaultValue,
-        variant: result.variant,
         reason: EvaluationReason.Error,
         errorCode: EvaluationErrorCode.TypeMismatch,
         errorMessage: `Flag "${result.key}" resolved to ${typeof result.value}, which is not the requested type`,
@@ -316,7 +327,14 @@ export class FeatureFlagClient {
   #mergeContext(context: EvaluationContext | undefined): EvaluationContext {
     if (context === undefined) return this.#defaultContext;
 
-    const merged: Record<string, AttributeValue | undefined> = { ...this.#defaultContext };
+    // Null prototype: an own `__proto__` key in a JSON-parsed context must
+    // land as plain data, never reach the Object.prototype setter and inject
+    // inherited attributes into targeting.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+    const merged = Object.create(null) as Record<string, AttributeValue | undefined>;
+    for (const [attribute, value] of Object.entries(this.#defaultContext)) {
+      merged[attribute] = value;
+    }
     for (const [attribute, value] of Object.entries(context)) {
       if (value !== undefined) merged[attribute] = value;
     }

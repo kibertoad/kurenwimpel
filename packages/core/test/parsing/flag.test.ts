@@ -149,13 +149,49 @@ describe('parseFlagDefinition', () => {
     ).toThrow(/at least one segment/u);
   });
 
-  it('rejects a negative rollout weight and an all-zero split', () => {
+  it('rejects a negative rollout weight but accepts a parked all-zero split', () => {
     expect(() =>
       parseFlagDefinition({ ...valid, rollout: [{ variant: 'on', weight: -1 }] }),
     ).toThrow(/non-negative/u);
+    // An experiment parked at zero is a valid flag; evaluation falls through
+    // to the default variant rather than the whole flag disappearing.
+    expect(
+      parseFlagDefinition({ ...valid, rollout: [{ variant: 'on', weight: 0 }] }).rollout,
+    ).toEqual([{ variant: 'on', weight: 0 }]);
+  });
+
+  it('rejects weights that individually pass but sum to Infinity', () => {
     expect(() =>
-      parseFlagDefinition({ ...valid, rollout: [{ variant: 'on', weight: 0 }] }),
-    ).toThrow(/more than zero/u);
+      parseFlagDefinition({
+        ...valid,
+        rollout: [
+          { variant: 'on', weight: 1e308 },
+          { variant: 'off', weight: 1e308 },
+        ],
+      }),
+    ).toThrow(/finite total/u);
+  });
+
+  it('rejects a malformed bucketBy or seed instead of silently dropping it', () => {
+    // Silently discarding either would quietly reassign the whole cohort.
+    const buckets = [{ variant: 'on', weight: 100 }];
+    expect(() =>
+      parseFlagDefinition({ ...valid, rollout: { bucketBy: ['accountId'], buckets } }),
+    ).toThrow(/bucketBy/u);
+    expect(() => parseFlagDefinition({ ...valid, rollout: { bucketBy: '', buckets } })).toThrow(
+      /bucketBy/u,
+    );
+    expect(() => parseFlagDefinition({ ...valid, rollout: { seed: 2, buckets } })).toThrow(/seed/u);
+    expect(() => parseFlagDefinition({ ...valid, allocation: { percent: 10, seed: 2 } })).toThrow(
+      /allocation seed/u,
+    );
+  });
+
+  it('rejects a malformed salt or version instead of silently dropping it', () => {
+    // A dropped salt would reshuffle every split of the flag.
+    expect(() => parseFlagDefinition({ ...valid, salt: 7 })).toThrow(/salt/u);
+    expect(() => parseFlagDefinition({ ...valid, salt: '' })).toThrow(/salt/u);
+    expect(() => parseFlagDefinition({ ...valid, version: '3' })).toThrow(/version/u);
   });
 
   it('drops an empty rollout array rather than producing an unservable split', () => {

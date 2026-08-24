@@ -75,24 +75,36 @@ export function murmurHash3(input: string, seed = 0): number {
 export const BUCKET_COUNT = 10_000;
 
 /**
+ * Encodes a hash-domain tuple injectively: every part is length-prefixed, so
+ * no choice of salt, seed, rule id, or bucketing key — including ones that
+ * contain a delimiter themselves — can make two distinct decision tuples
+ * share a hash input.
+ */
+function encodeDomain(parts: readonly string[]): string {
+  let encoded = '';
+  for (const part of parts) encoded += `${part.length}:${part}`;
+  return encoded;
+}
+
+/**
  * Maps a subject to a stable bucket in `[0, BUCKET_COUNT)`.
  *
- * The salt separates independent draws: the same user gets an uncorrelated
+ * The domain separates independent draws: the same user gets an uncorrelated
  * bucket per flag, so being in the unlucky tail of one experiment does not put
  * them in the tail of every other.
  */
-export function bucketOf(salt: string, bucketingKey: string): number {
-  return murmurHash3(`${salt}:${bucketingKey}`) % BUCKET_COUNT;
+export function bucketOf(domain: readonly string[], bucketingKey: string): number {
+  return murmurHash3(encodeDomain([...domain, bucketingKey])) % BUCKET_COUNT;
 }
 
 /**
  * The traffic-allocation gate: is this subject inside the flag's exposed slice?
  *
- * The hash domain is `<salt>!allocation`, distinct by construction from every
- * variant-assignment domain (`<salt>`, `<salt>:<ruleId>`, and their seeded
- * forms). That decorrelation is the point: widening the allocation admits new
- * subjects while everyone already admitted keeps the treatment they had,
- * because admission and assignment are independent draws.
+ * The hash domain is tagged `allocation`, distinct by construction from every
+ * variant-assignment domain (tagged `rollout` and `rule`) no matter what the
+ * salt or seeds contain. That decorrelation is the point: widening the
+ * allocation admits new subjects while everyone already admitted keeps the
+ * treatment they had, because admission and assignment are independent draws.
  */
 export function isAllocated(
   allocation: TrafficAllocation,
@@ -103,7 +115,10 @@ export function isAllocated(
   if (allocation.percent <= 0) return false;
 
   const domain =
-    allocation.seed === undefined ? `${salt}!allocation` : `${salt}!allocation:${allocation.seed}`;
+    allocation.seed === undefined ? ['allocation', salt] : ['allocation', salt, allocation.seed];
 
-  return bucketOf(domain, targetingKey) < (allocation.percent / 100) * BUCKET_COUNT;
+  // percent has 0.01 granularity, so the threshold is an exact bucket count;
+  // rounding keeps float drift from admitting one extra bucket (0.07 / 100 *
+  // 10 000 is 7.000000000000001).
+  return bucketOf(domain, targetingKey) < Math.round((allocation.percent / 100) * BUCKET_COUNT);
 }

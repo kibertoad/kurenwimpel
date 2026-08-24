@@ -116,8 +116,9 @@ probe) plus condition rules. Flags reference segments with the `inSegment` /
 `notInSegment` operators. Exclusion always wins — an excluded key is out no
 matter what the rules say — and membership never nests, so it can never cycle.
 
-Bucketing is MurmurHash3 over `"<domain>:<targetingKey>"`, with hash domains
-derived from a per-flag salt. Three consequences worth relying on:
+Bucketing is MurmurHash3 over an injectively encoded domain tuple plus the
+targeting key, with domains derived from a per-flag salt. Three consequences
+worth relying on:
 
 - The same subject always lands in the same bucket, on every runtime and in every
   process — no coordination needed between a Worker at the edge and a Node service.
