@@ -13,8 +13,11 @@ supplies a `FlagProvider` and nothing else.
 | `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
 | `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
 | `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
+| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
 
 Both wrappers re-export the core, so a service only ever imports one package.
+`@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
+an implementation, and depends on none of them.
 
 ## Toolchain
 
@@ -201,3 +204,23 @@ interface FlagProvider {
 `parseFlagDefinitions(raw)` from the core does the validation, and `createSnapshot`
 builds the result. That is the whole contract — see `packages/node/src/file-provider.ts`
 for the smallest complete example.
+
+## Speaking OpenFeature
+
+`@kurenwimpel/ofrep` is the [OpenFeature Remote Evaluation
+Protocol](https://openfeature.dev/docs/reference/other-technologies/ofrep/) written
+out as a [toad-contracts](https://github.com/kibertoad/toad-contracts) API contract:
+two routes, every request and response body, and the change-notification stream,
+as Zod Mini schemas checked against the specification's own examples.
+
+OFREP is the HTTP layer between an OpenFeature provider and a flag management
+system. Serving it means every community-maintained OFREP provider — in any
+language — can read flags from this project without a bespoke SDK.
+
+Nothing implements it yet. The contract exists first, so that the server handler,
+the OFREP-backed `FlagProvider`, and any test double are all built against one
+shared definition rather than three separate readings of the same OpenAPI document. It also does the reading
+that an implementation would otherwise do late and painfully: `packages/ofrep/README.md`
+sets out where the two models disagree — reasons the protocol has no name for,
+flag values that have no wire representation, and a context shape that is flat
+where the core's is nested.
