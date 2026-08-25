@@ -149,3 +149,7 @@ vite.config.ts.timestamp-*
 .dev.vars
 .idea/
 .vscode/
+
+# Stryker mutation testing
+.stryker-tmp/
+reports/
