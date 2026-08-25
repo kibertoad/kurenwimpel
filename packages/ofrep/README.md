@@ -12,6 +12,10 @@ specification, not an implementation: it describes both sides of the wire and
 implements neither. It also does not depend on `@kurenwimpel/core`, so it stays
 usable as a plain OFREP contract.
 
+The document itself is vendored at a pinned commit in [`spec/`](spec/README.md)
+and the transcription is checked against it on every test run — see
+[_Grounded on the document_](#grounded-on-the-document).
+
 [spec]: https://github.com/open-feature/protocol/blob/main/service/openapi.yaml
 [toad]: https://github.com/kibertoad/toad-contracts
 [zod]: https://zod.dev/packages/mini
@@ -79,9 +83,37 @@ Schema, so `@toad-contracts/core` neither knows nor cares which was used.
 never both. Each arm of the union declares the other field `optional(never())`, so
 supplying both fails instead of quietly matching whichever arm came first.
 
+## Grounded on the document
+
+A transcription's real failure mode is the source changing underneath it, and
+upstream has no version to depend on: the OpenAPI document lives on a branch of
+[`open-feature/protocol`][protocol], with no tags, no releases and no npm
+package. So `spec/` holds a byte-for-byte copy of it at a recorded commit, and
+three guards keep the two in step ([ADR 0009](../../docs/adr/0009-vendored-ofrep-spec.md)):
+
+| Guard                            | Catches                                                      | Runs                       |
+| -------------------------------- | ------------------------------------------------------------ | -------------------------- |
+| `test/spec-*.test.ts`            | A schema, route, parameter or example that no longer matches | `pnpm test`, offline       |
+| `pnpm spec:check`                | Upstream having moved on                                     | Weekly in CI, or on demand |
+| `spec/provenance.json` checksums | A vendored document edited to make a test pass               | `pnpm test`, offline       |
+
+The checks are read out of the document rather than written down beside it: the
+component map is exhaustive by test, every example in the document is parsed by
+the schema that would receive it on the wire, and both sides of every shape
+comparison go through the same JSON Schema normaliser. A property added upstream,
+an enum value renamed, a seventh flag type, a new query parameter — each fails a
+test that nobody had to think to write.
+
+Updating to a newer revision is `pnpm --filter @kurenwimpel/ofrep run spec:sync`
+followed by the test run; [`spec/README.md`](spec/README.md) maps each possible
+failure to where it is reconciled.
+
+[protocol]: https://github.com/open-feature/protocol
+
 ## Where this deviates from the document
 
-Three places, all deliberate.
+Three places, all deliberate — and each one pinned by a test against the vendored
+copy, so it stays a deviation from a known baseline rather than becoming drift.
 
 1. **`flagNotFound` is accepted inside a bulk `flags` array.** The specification
    types those items as `oneOf: [evaluationSuccess, evaluationFailure]` and leaves

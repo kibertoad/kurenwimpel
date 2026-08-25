@@ -1,0 +1,34 @@
+name: OFREP spec drift
+
+# `@kurenwimpel/ofrep` is a transcription of an OpenAPI document that upstream
+# publishes on a branch, with no tags and no releases. CI already checks the
+# transcription against the copy vendored in `packages/ofrep/spec`; this job is
+# the other half — it checks that copy against upstream.
+on:
+  schedule:
+    # Mondays, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  spec-check:
+    name: vendored spec vs open-feature/protocol@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # No `pnpm install`: the script has no dependencies, and a scheduled alarm
+      # is worth more when there is less between it and the answer. The failure
+      # message names the commands that update the vendored copies.
+      - run: node packages/ofrep/scripts/sync-spec.mjs --check

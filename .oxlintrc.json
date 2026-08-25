@@ -73,6 +73,38 @@
       "rules": {
         "no-console": "off"
       }
+    },
+    {
+      // Maintenance CLIs: plain ESM, outside the typed build, and printing is the
+      // whole point of running them. The type-aware rules have nothing to work
+      // from in a file no tsconfig includes — every `fetch` result reads as
+      // `any` — so those are off here and the rest of the rule set still applies.
+      "files": ["**/scripts/**/*.mjs"],
+      "rules": {
+        "no-console": "off",
+        "typescript/no-unsafe-argument": "off",
+        "typescript/no-unsafe-assignment": "off",
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-return": "off",
+        "typescript/strict-boolean-expressions": "off"
+      }
+    },
+    {
+      // These walk the vendored OpenAPI document — someone else's JSON, with no
+      // types to hand and no value in inventing any: the whole point is to read
+      // what the document says rather than what we expected it to say.
+      "files": [
+        "packages/ofrep/test/openapi-document.ts",
+        "packages/ofrep/test/spec-conformance.test.ts",
+        "packages/ofrep/test/spec-operations.test.ts",
+        "packages/ofrep/test/spec-examples.test.ts"
+      ],
+      "rules": {
+        "typescript/no-unsafe-member-access": "off",
+        "typescript/no-unsafe-call": "off",
+        "typescript/no-unsafe-return": "off"
+      }
     }
   ]
 }
