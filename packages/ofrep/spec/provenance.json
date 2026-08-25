@@ -1,0 +1,22 @@
+{
+  "$comment": "Written by scripts/sync-spec.mjs. Refresh with `pnpm --filter @kurenwimpel/ofrep run spec:sync`; see spec/README.md.",
+  "repository": "https://github.com/open-feature/protocol",
+  "ref": "main",
+  "commit": "89debb46e30c627b3065d607cfb8c4b1058050cb",
+  "commitDate": "2026-07-21T15:42:36Z",
+  "retrievedAt": "2026-08-25T09:45:46.735Z",
+  "files": [
+    {
+      "path": "openapi.yaml",
+      "upstreamPath": "service/openapi.yaml",
+      "bytes": 27704,
+      "sha256": "e5f560c5194ce5f0c077685a734ecbf5d4baa3311cf862c69b636938e1fdd056"
+    },
+    {
+      "path": "event-streams.yaml",
+      "upstreamPath": "service/event-streams.yaml",
+      "bytes": 1914,
+      "sha256": "0a7492575442dc8281948da43493230e748bc63ee57eed0ca03aeae17f43e93c"
+    }
+  ]
+}

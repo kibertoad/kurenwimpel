@@ -331,6 +331,16 @@ out as a [toad-contracts](https://github.com/kibertoad/toad-contracts) API contr
 two routes, every request and response body, and the change-notification stream,
 as Zod Mini schemas checked against the specification's own examples.
 
+The specification is vendored at a pinned commit in `packages/ofrep/spec` and the
+transcription is compared to it — schema by schema, route by route, example by
+example — on every test run, with a weekly CI job watching upstream for movement
+([ADR 0009](docs/adr/0009-vendored-ofrep-spec.md)). Updating to a newer revision:
+
+```sh
+pnpm --filter @kurenwimpel/ofrep run spec:sync   # then run the tests
+pnpm --filter @kurenwimpel/ofrep run spec:check  # is the vendored copy current?
+```
+
 OFREP is the HTTP layer between an OpenFeature provider and a flag management
 system. Serving it means every community-maintained OFREP provider — in any
 language — can read flags from this project without a bespoke SDK.

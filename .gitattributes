@@ -1,0 +1,4 @@
+# The vendored OFREP documents are compared to upstream by checksum, so their
+# bytes have to survive a round trip through git unchanged — no line-ending
+# normalisation, on any platform.
+packages/ofrep/spec/*.yaml -text
