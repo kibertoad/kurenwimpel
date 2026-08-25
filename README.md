@@ -67,6 +67,23 @@ without codegen. Regenerate it after editing `wrangler.toml`:
 pnpm --filter @kurenwimpel/cloudflare run cf-typegen
 ```
 
+### Mutation testing
+
+Stryker measures how much of each suite actually bites — it mutates the source
+and counts which mutants the tests kill:
+
+```sh
+pnpm run test:mutation                             # every package, sequentially
+pnpm --filter @kurenwimpel/core run test:mutation  # one package
+```
+
+The HTML report lands in `packages/<name>/reports/mutation/`. Core and node run
+incrementally (`reports/stryker-incremental.json`), so a re-run only tests what
+changed — with one caveat: a _static_ mutant (one in a top-level initialiser)
+keeps its old verdict even when a new test targets it, so delete the incremental
+file when the score itself is the point. The Cloudflare package is not mutated:
+its tests run inside workerd, which Stryker's vitest runner cannot drive.
+
 ## Concepts
 
 A **flag** has named **variants** mapping to values. A variant value is a
