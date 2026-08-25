@@ -52,7 +52,11 @@ export {
 } from './evaluation/conditions.js';
 export type { SegmentMap } from './evaluation/conditions.js';
 export { createSharedMemo, evaluateFlag } from './evaluation/evaluate.js';
-export type { EvaluationEnvironment, SharedPrerequisiteMemo } from './evaluation/evaluate.js';
+export type {
+  EvaluationEnvironment,
+  PrerequisiteOutcome,
+  SharedPrerequisiteMemo,
+} from './evaluation/evaluate.js';
 export { compileSegment } from './evaluation/segments.js';
 export { buildTargetIndex, compileTargets } from './evaluation/targets.js';
 export type { TargetIndex } from './evaluation/targets.js';

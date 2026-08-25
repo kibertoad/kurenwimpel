@@ -99,7 +99,7 @@ function parseAttributeCondition(
     case 'in':
     case 'notIn': {
       if (!isScalarList(value)) {
-        fail(`${at}: ${operator} needs an array of strings or numbers`);
+        fail(`${at}: ${operator} needs an array of strings or finite numbers`);
       }
       // Copied for the reason {@link requireStringArray} copies: a condition
       // holding the caller's own array would let a later push into the decoded

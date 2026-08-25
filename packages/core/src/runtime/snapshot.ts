@@ -97,21 +97,33 @@ export function environmentOf(snapshot: FlagSnapshot): EvaluationEnvironment {
  * inspecting it.
  *
  * The index is rebuilt rather than defaulted, because it can be: it is derived
- * from the flags, which are present. The segments cannot be — a snapshot that
- * never carried them has none — so they default to empty, which is the same
- * answer, arrived at explicitly.
+ * from the flags. The segments cannot be — a snapshot that never carried them
+ * has none — so they default to empty, which is the same answer, arrived at
+ * explicitly.
+ *
+ * `flags` gets the same treatment as the other two rather than being trusted to
+ * its type. It is the one field that used to be dereferenced on the way to
+ * rebuilding the index, so the very shapes this function exists to absorb — the
+ * `{ version, fetchedAt }` a third-party provider or an untyped fixture builds
+ * literally — threw a TypeError out of the public `setSnapshot` instead of
+ * being completed. An empty ruleset answers FLAG_NOT_FOUND, which is a bad
+ * snapshot's honest answer; a throw from a setter is nobody's.
  *
  * A snapshot straight from {@link createSnapshot} is handed back untouched.
  */
 export function completeSnapshot(snapshot: FlagSnapshot): FlagSnapshot {
+  const hasFlags = isFlagLookup(snapshot.flags);
   const hasSegments = isLookup(snapshot.segments);
   const hasTargetIndex = isLookup(snapshot.targetIndex);
-  if (hasSegments && hasTargetIndex) return snapshot;
+  if (hasFlags && hasSegments && hasTargetIndex) return snapshot;
+
+  const flags = hasFlags ? snapshot.flags : new Map<string, FlagDefinition>();
 
   return {
     ...snapshot,
+    flags,
     segments: hasSegments ? snapshot.segments : new Map<string, Segment>(),
-    targetIndex: hasTargetIndex ? snapshot.targetIndex : buildTargetIndex(snapshot.flags.values()),
+    targetIndex: hasTargetIndex ? snapshot.targetIndex : buildTargetIndex(flags.values()),
   };
 }
 
@@ -127,6 +139,17 @@ function isLookup(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) return false;
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return typeof (value as ReadonlyMap<unknown, unknown>).get === 'function';
+}
+
+/**
+ * The flags are the one lookup that is also iterated — here to rebuild the
+ * index, and by `evaluateAll` for every flag in the ruleset — so being probeable
+ * is not enough on its own.
+ */
+function isFlagLookup(value: unknown): boolean {
+  if (!isLookup(value)) return false;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  return typeof (value as ReadonlyMap<unknown, unknown>).values === 'function';
 }
 
 export const EMPTY_SNAPSHOT: FlagSnapshot = {

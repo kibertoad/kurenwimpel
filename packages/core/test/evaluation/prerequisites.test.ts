@@ -3,8 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createSharedMemo, evaluateFlag } from '../../src/index.js';
 import type {
   EvaluationEnvironment,
-  EvaluationResult,
   FlagDefinition,
+  PrerequisiteOutcome,
   SharedPrerequisiteMemo,
 } from '../../src/index.js';
 
@@ -27,10 +27,10 @@ const environmentOf = (...flags: FlagDefinition[]): EvaluationEnvironment => ({
  * second copy of the package in one bundle.
  */
 const foreignMemo = (): SharedPrerequisiteMemo => {
-  const store = new Map<string, EvaluationResult>();
+  const store = new Map<string, PrerequisiteOutcome>();
   return {
     get: (key: string) => store.get(key),
-    set: (key: string, value: EvaluationResult) => store.set(key, value),
+    set: (key: string, value: PrerequisiteOutcome) => store.set(key, value),
   } as unknown as SharedPrerequisiteMemo;
 };
 
@@ -251,10 +251,12 @@ describe('prerequisite graph cost', () => {
     const result = evaluateFlag(flags.get('f0')!, {}, { flags });
 
     expect(result).toMatchObject({ reason: 'ERROR', errorCode: 'INVALID_DEFINITION' });
-    // Reported against the flag that was asked for, naming the one the walk
-    // gave up at.
-    expect(result.errorMessage).toContain('Flag "f0" has a prerequisite chain more than 50 deep');
-    expect(result.errorMessage).toContain('"f50"');
+    // Reported against the flag that was asked for, naming its own prerequisite
+    // — the edge the walk went in through. See `prerequisite-walk.test.ts` for
+    // why that rather than the flag the guard fired at.
+    expect(result.errorMessage).toBe(
+      'Flag "f0" has a prerequisite chain more than 50 deep through "f1"',
+    );
   });
 
   it('keeps one root\u2019s depth failure out of another root\u2019s answer', () => {
@@ -368,7 +370,7 @@ describe('the shared memo is recognised by what it does, not by instanceof', () 
 
     expect(result.variant).toBe('on');
     expect(result.errorCode).toBeUndefined();
-    expect(memo.get('new-backend')?.variant).toBe('on');
+    expect(memo.get('new-backend')?.result.variant).toBe('on');
   });
 
   it('starts a fresh one when what it was handed is not a memo at all', () => {

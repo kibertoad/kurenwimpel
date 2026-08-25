@@ -25,6 +25,19 @@ import { isKeyedDefinition } from '../parsing/primitives.js';
 import { drawAllocation, settledAllocation } from './bucketing.js';
 import { matchesRule, readTargetingKey } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
+import {
+  chainFrom,
+  createSharedMemo,
+  isWalkFailure,
+  MAX_PREREQUISITE_DEPTH,
+  PrerequisiteWalkError,
+  reach,
+} from './prerequisite-walk.js';
+import type {
+  PrerequisiteChain,
+  PrerequisiteTrail,
+  SharedPrerequisiteMemo,
+} from './prerequisite-walk.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
 import { foldedTargets } from './targets.js';
 import type { TargetIndex } from './targets.js';
@@ -42,83 +55,8 @@ export interface EvaluationEnvironment {
   readonly targetIndex?: TargetIndex;
 }
 
-/**
- * How deep a prerequisite chain may be before it is treated as a broken
- * definition: far past any real dependency graph, and short enough that the
- * recursion cannot exhaust the stack on the way to finding out.
- */
-const MAX_PREREQUISITE_DEPTH = 50;
-
-/**
- * Raised when a chain runs deeper than {@link MAX_PREREQUISITE_DEPTH}, and
- * caught by {@link evaluateFlag}, which reports it against the flag that was
- * actually asked for.
- *
- * Thrown rather than returned because depth is a property of the walk, not of
- * the flag it stops at: the very same flag is thirty prerequisites below one
- * root and fifty-one below another. A returned error would be memoised under
- * that flag's key and would then answer for it on every later lookup sharing
- * the memo — so which flags a bulk response called broken would come down to
- * the order the snapshot happens to iterate in, and one flag would answer
- * differently through `evaluate` than through `evaluateAll`. Unwinding to the
- * root instead leaves the memo holding only results that stand on their own.
- */
-class PrerequisiteDepthError extends Error {
-  override readonly name = 'PrerequisiteDepthError';
-
-  constructor(deepest: string) {
-    super(`prerequisite chain more than ${MAX_PREREQUISITE_DEPTH} deep, reaching "${deepest}"`);
-  }
-}
-
-/**
- * A prerequisite memo shared by several flags evaluated against one context.
- *
- * Opaque on purpose: it is a cache keyed by flag, valid only for the context it
- * was filled against. Build one with {@link createSharedMemo} and discard it
- * with the request.
- */
-export type SharedPrerequisiteMemo = Map<string, EvaluationResult>;
-
-/** The flags on the chain being walked, and the memo they all share. */
-interface PrerequisiteChain {
-  /** Meeting one of these again is a cycle. */
-  readonly visiting: ReadonlySet<string>;
-  readonly memo: SharedPrerequisiteMemo;
-}
-
-/**
- * What an evaluation carries down its prerequisite chain: a bare memo until
- * some flag on the chain declares a prerequisite, a full chain from there on.
- *
- * The two shapes share one parameter so that starting a chain costs nothing
- * until there is one to start. Most flags declare no prerequisite at all, and
- * a bulk evaluation that seeded a Set per flag up front would allocate one for
- * every flag in the ruleset only for {@link checkPrerequisites} to return
- * before ever reading it.
- *
- * `memo` is what keeps the walk linear. Two flags that share a dependency must
- * cost one evaluation of it, not one per path that reaches it — otherwise a
- * chain of depth n costs 2^n, and a control plane can turn a single lookup into
- * seconds of CPU. Every entry was computed against the same context, which is
- * fixed for the whole walk.
- */
-type PrerequisiteTrail = SharedPrerequisiteMemo | PrerequisiteChain;
-
-/**
- * A memo to hand to every {@link evaluateFlag} call of one bulk evaluation.
- *
- * Each flag otherwise seeds a memo of its own, which keeps a single flag's
- * chain linear but does nothing across flags: a kill switch that gates 200 of
- * them is evaluated 200 times, and everything beneath it with it. Sharing the
- * memo makes a bulk response O(flags + edges) instead of O(flags × depth).
- *
- * Only the memo is shared. Every flag still gets its own `visiting` chain, or
- * one flag's ancestry would read as another flag's cycle.
- */
-export function createSharedMemo(): SharedPrerequisiteMemo {
-  return new Map();
-}
+export { createSharedMemo };
+export type { PrerequisiteOutcome, SharedPrerequisiteMemo } from './prerequisite-walk.js';
 
 /**
  * Evaluates one flag against a context. The entry point of the whole core.
@@ -143,8 +81,9 @@ export function evaluateFlag<T extends FlagValue = FlagValue>(
   try {
     return evaluateGuarded(flag, contextOf(context), environment, memo);
   } catch (error) {
-    if (error instanceof PrerequisiteDepthError) {
-      return invalidDefinition(flag, `Flag "${flag.key}" has a ${error.message}`);
+    if (isWalkFailure(error)) {
+      const through = error.kind === 'depth' ? ` through "${error.through}"` : '';
+      return invalidDefinition(flag, `Flag "${flag.key}" has a ${error.message}${through}`);
     }
 
     // The no-throw contract has to hold for definitions that never went through
@@ -293,6 +232,10 @@ function matchRule<T extends FlagValue>(
  * Returns the result to serve when a prerequisite fails, `undefined` when all
  * hold. A missing environment fails closed — a dependency that cannot be
  * checked is a dependency that does not hold.
+ *
+ * The two ways the walk itself can be broken — too deep, or closing a cycle —
+ * are thrown rather than returned, and reported against the flag the caller
+ * asked for; see {@link PrerequisiteWalkError}.
  */
 function checkPrerequisites<T extends FlagValue>(
   flag: FlagDefinition<T>,
@@ -305,14 +248,13 @@ function checkPrerequisites<T extends FlagValue>(
 
   const chain = chainFrom(flag.key, trail);
 
-  if (chain.visiting.size > MAX_PREREQUISITE_DEPTH) throw new PrerequisiteDepthError(flag.key);
+  const size = chain.visiting.size;
+  if (size > MAX_PREREQUISITE_DEPTH) throw PrerequisiteWalkError.tooDeep(flag.key);
+  if (size > chain.reached) chain.reached = size;
 
   for (const prerequisite of prerequisites) {
     if (chain.visiting.has(prerequisite.flag)) {
-      return invalidDefinition(
-        flag,
-        `Flag "${flag.key}" has a prerequisite cycle through "${prerequisite.flag}"`,
-      );
+      throw PrerequisiteWalkError.cycle(flag.key, prerequisite.flag);
     }
 
     const dependency = environment.flags?.get(prerequisite.flag);
@@ -361,49 +303,6 @@ function isGatedOff(reason: EvaluationReason): boolean {
 }
 
 /**
- * The chain to walk from here: the one already in progress, or a fresh one
- * rooted at this flag.
- *
- * Built here rather than by the entry point, so a flag that declares no
- * prerequisite — the overwhelming majority of any ruleset — costs no
- * allocation at all, memo or no memo. The root's own key has to go on the
- * chain, or a hand-built flag naming itself would recurse instead of being
- * reported as a cycle.
- *
- * The two shapes are told apart by what a chain carries rather than by
- * `instanceof Map`, which `segments.ts` refuses for the same reason: a memo
- * built in another realm — a `vm` context, a worker, a second copy of the
- * package in one bundle — is exactly what it claims to be and still fails the
- * test. Read as a chain, it would dereference a `visiting` set it does not
- * have, and the TypeError would unwind into {@link evaluateFlag}'s catch and
- * report a perfectly good flag as an unusable definition.
- */
-function chainFrom(key: string, trail: PrerequisiteTrail | undefined): PrerequisiteChain {
-  if (isChain(trail)) return trail;
-  return { visiting: new Set([key]), memo: isMemo(trail) ? trail : new Map() };
-}
-
-/** A trail that has already started a chain is the one carrying its flags. */
-function isChain(trail: unknown): trail is PrerequisiteChain {
-  return typeof trail === 'object' && trail !== null && 'visiting' in trail;
-}
-
-/**
- * Whether the memo handed over can be used as one.
- *
- * {@link createSharedMemo} is the documented way to make one, but the
- * parameter is public and a JavaScript caller can pass anything at all. A
- * fresh memo costs one allocation on a path that was going to allocate a `Set`
- * regardless, and keeps the walk from throwing over the caller's mistake.
- */
-function isMemo(trail: unknown): trail is SharedPrerequisiteMemo {
-  if (typeof trail !== 'object' || trail === null) return false;
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-  const candidate = trail as SharedPrerequisiteMemo;
-  return typeof candidate.get === 'function' && typeof candidate.set === 'function';
-}
-
-/**
  * One dependency, evaluated behind a guard of its own. `undefined` means it
  * could not be evaluated at all.
  *
@@ -417,10 +316,10 @@ function isMemo(trail: unknown): trail is SharedPrerequisiteMemo {
  * called for. ADR 0006 is explicit that a dependency erroring is a dependency
  * that does not hold: PREREQUISITE_FAILED, off variant, fail closed.
  *
- * The depth error is the one exception and is rethrown untouched. Depth is a
- * property of the walk rather than of the flag it stops at, so it is reported
- * against the flag that was actually asked for; see
- * {@link PrerequisiteDepthError}.
+ * The two walk failures are the exception and are rethrown untouched. Neither
+ * a chain run too deep nor an edge closing a cycle is a property of the flag it
+ * was noticed at, so both are reported against the flag that was actually asked
+ * for; see {@link PrerequisiteWalkError}.
  *
  * Nothing is memoised for a throwing dependency — the memo holds evaluation
  * outcomes, and this is the absence of one. A dependency broken this way is
@@ -436,27 +335,54 @@ function tryDependency(
   try {
     return evaluateDependency(dependency, context, environment, chain);
   } catch (error) {
-    if (error instanceof PrerequisiteDepthError) throw error;
+    if (isWalkFailure(error)) {
+      // Each frame on the way up claims the edge it went in through, so the
+      // root reports its own rather than one fifty levels down. Harmless for a
+      // cycle, whose message already names the edge it found.
+      error.through = dependency.key;
+      throw error;
+    }
     return undefined;
   }
 }
 
-/** One dependency, evaluated at most once per request. See {@link PrerequisiteTrail}. */
+/**
+ * One dependency, evaluated at most once per request. See
+ * {@link PrerequisiteTrail}.
+ *
+ * A memo hit costs no stack, but it must not cost the depth guard its count
+ * either. The guard reads `visiting`, which only grows on the way *down* — so a
+ * dependency answered from the memo used to make the chain below it vanish, and
+ * whether a graph tripped the limit came down to how much of it some earlier
+ * flag had already walked. One client answered `evaluateAll` and `evaluate`
+ * differently for the same flag and the same context, which is the exact
+ * inconsistency {@link PrerequisiteWalkError} is written to prevent. The entry
+ * therefore carries how deep its own subtree ran, and the hit is charged for it.
+ */
 function evaluateDependency(
   dependency: FlagDefinition,
   context: EvaluationContext,
   environment: EvaluationEnvironment,
   chain: PrerequisiteChain,
 ): EvaluationResult {
-  const cached = chain.memo.get(dependency.key);
-  if (cached !== undefined) return cached;
+  const size = chain.visiting.size;
 
-  const outcome = evaluateGuarded(dependency, context, environment, {
+  const cached = chain.memo.get(dependency.key);
+  if (cached !== undefined) {
+    reach(chain, size + cached.depth, dependency.key);
+    return cached.result;
+  }
+
+  const below: PrerequisiteChain = {
     visiting: new Set([...chain.visiting, dependency.key]),
     memo: chain.memo,
-  });
+    reached: 0,
+  };
 
-  chain.memo.set(dependency.key, outcome);
+  const outcome = evaluateGuarded(dependency, context, environment, below);
+
+  reach(chain, below.reached, dependency.key);
+  chain.memo.set(dependency.key, { result: outcome, depth: Math.max(0, below.reached - size) });
   return outcome;
 }
 

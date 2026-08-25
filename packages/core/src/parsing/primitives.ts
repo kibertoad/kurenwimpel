@@ -80,10 +80,23 @@ export function isKeyedDefinition(value: unknown): value is { readonly key: stri
   return isRecord(value) && typeof value['key'] === 'string';
 }
 
+/**
+ * A list of the scalars a set operator can hold.
+ *
+ * Numbers must be finite, the rule {@link requireFiniteNumber} applies to every
+ * other numeric field the parser validates — a comparison bound, a weight, a
+ * variant value, a metadata annotation. A `NaN` entry equals nothing, itself
+ * included, so `in` could never match it and `notIn` would carry a member it
+ * can never exclude; an `Infinity` entry has no JSON spelling, so only a
+ * compiled-in definition can even offer one.
+ */
 export function isScalarList(value: unknown): value is (string | number)[] {
   return (
     Array.isArray(value) &&
-    value.every((item: unknown) => typeof item === 'string' || typeof item === 'number')
+    value.every(
+      (item: unknown) =>
+        typeof item === 'string' || (typeof item === 'number' && Number.isFinite(item)),
+    )
   );
 }
 

@@ -120,9 +120,9 @@ function readConditionValue(
 /**
  * Evaluates a single predicate.
  *
- * Array-valued attributes are treated as sets: `in` and `contains` match when
- * any element matches, which is what callers expect from things like
- * `roles: ['admin', 'billing']`.
+ * Array-valued attributes are treated as sets: `eq`, `neq`, `in`, and
+ * `contains` match when any element matches, which is what callers expect from
+ * things like `roles: ['admin', 'billing']`.
  */
 export function matchesCondition(
   condition: Condition,
@@ -143,20 +143,22 @@ export function matchesCondition(
       return actual === undefined;
     }
     case 'eq': {
-      return actual === condition.value;
+      return equality(condition.attribute, actual, condition.value) === true;
     }
     case 'neq': {
-      // Fail closed: an absent attribute is not evidence of inequality.
-      return actual !== undefined && actual !== condition.value;
+      // Neither operator matches while equality is undecidable, so an absent
+      // attribute is not evidence of inequality and neither is an operand no
+      // context value could ever equal.
+      return equality(condition.attribute, actual, condition.value) === false;
     }
     case 'in': {
-      return listMembership(actual, condition.value) === true;
+      return listMembership(condition.attribute, actual, condition.value) === true;
     }
     case 'notIn': {
       // Neither operator matches while membership is undecidable, so an absent
       // attribute is not evidence of exclusion and a malformed list does not
       // turn the rule on for everyone it was written to exclude.
-      return listMembership(actual, condition.value) === false;
+      return listMembership(condition.attribute, actual, condition.value) === false;
     }
     case 'contains':
     case 'startsWith':
@@ -288,6 +290,55 @@ function isSegmentCondition(condition: Condition): condition is SegmentCondition
 }
 
 /**
+ * The value a condition compares against, under the same identity rule the
+ * attribute side already travels.
+ *
+ * {@link readConditionValue} resolves a context's targeting key through
+ * {@link identityOf}, so the operand has to make the same trip or the two sides
+ * can never meet. A control plane reading the operand off a numeric id column
+ * writes `targetingKey eq 42`; untranslated, that rule matched nobody at all
+ * while its `neq` twin matched everybody — including the one subject it names.
+ *
+ * `undefined` means "no context value can ever equal this": a boolean, or an
+ * empty string, is not an identity. Both operators fail closed on it, exactly
+ * as they do on an absent attribute.
+ */
+function comparandFor(
+  attribute: string,
+  value: string | number | boolean,
+): string | number | boolean | undefined {
+  return attribute === 'targetingKey' ? identityOf(value) : value;
+}
+
+/**
+ * Equality, as a tri-state: `true` equal, `false` not, `undefined` when the
+ * question cannot be answered at all — the shape {@link listMembership} uses,
+ * and for the same reason.
+ *
+ * An array-valued attribute is a set here exactly as it is there: `roles:
+ * ['admin', 'billing']` equals `'admin'` because one of its elements does.
+ * Leaving `eq` and `neq` out of that rule made them contradict `in` and `notIn`
+ * on identical data — `notIn: ['admin']` did not match an admin while `neq:
+ * 'admin'` did — so a rule written to exclude a cohort served it the treatment
+ * instead. `neq` was the one matcher in this module that failed open.
+ */
+function equality(
+  attribute: string,
+  actual: AttributeValue | undefined,
+  expected: string | number | boolean,
+): boolean | undefined {
+  if (actual === undefined) return undefined;
+
+  const wanted = comparandFor(attribute, expected);
+  if (wanted === undefined) return undefined;
+
+  if (Array.isArray(actual)) {
+    return (actual as readonly unknown[]).some((item) => item === wanted);
+  }
+  return actual === wanted;
+}
+
+/**
  * Set membership, as a tri-state: `true` in, `false` out, `undefined` when the
  * question cannot be answered at all.
  *
@@ -300,18 +351,27 @@ function isSegmentCondition(condition: Condition): condition is SegmentCondition
  * match every plan spelled with any substring of it.
  */
 function listMembership(
+  attribute: string,
   actual: AttributeValue | undefined,
   list: readonly (string | number)[],
 ): boolean | undefined {
   if (actual === undefined) return undefined;
   if (!Array.isArray(list)) return undefined;
 
+  // Every entry travels the identity rule the attribute side took; see
+  // {@link comparandFor}. Only the targeting key translates, and only it pays
+  // for the scan — every other attribute keeps the native set probe.
+  const holds = (item: string | number): boolean =>
+    attribute === 'targetingKey'
+      ? list.some((entry: string | number) => identityOf(entry) === item)
+      : list.includes(item);
+
   if (Array.isArray(actual)) {
     return (actual as readonly unknown[]).some(
-      (item) => (typeof item === 'string' || typeof item === 'number') && list.includes(item),
+      (item) => (typeof item === 'string' || typeof item === 'number') && holds(item),
     );
   }
-  if (typeof actual === 'string' || typeof actual === 'number') return list.includes(actual);
+  if (typeof actual === 'string' || typeof actual === 'number') return holds(actual);
 
   // An attribute of a type no list can hold — an object, a boolean, a null —
   // is out of the set rather than unanswerable: `notIn` should match it.

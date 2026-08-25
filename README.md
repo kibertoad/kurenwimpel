@@ -125,13 +125,19 @@ probe) plus condition rules. Flags reference segments with the `inSegment` /
 matter what the rules say — and membership never nests, so it can never cycle.
 
 Bucketing is MurmurHash3 over an injectively encoded domain tuple plus the
-targeting key, with domains derived from a per-flag salt. Three consequences
+targeting key, with domains derived from a per-flag salt. Four consequences
 worth relying on:
 
 - The same subject always lands in the same bucket, on every runtime and in every
   process — no coordination needed between a Worker at the edge and a Node service.
-- Widening a rollout or an allocation only ever adds subjects. Ramping 20% → 50%
+- Widening an allocation only ever adds subjects. Ramping `percent` 20 → 50
   never takes someone back out, and never reassigns anyone already inside.
+- A rollout is monotone the same way **as long as its weights still add up to
+  the same total**, because a split is normalised by that sum: `[on 20, off 80]`
+  → `[on 50, off 50]` only moves subjects into `on`, but bumping `on` to 50 and
+  leaving `off` at 80 re-scales every boundary and reshuffles the population.
+  Ramping exposure is the allocation gate's job, not the weights' — see
+  [ADR 0005](docs/adr/0005-traffic-allocation.md).
 - Allocation and assignment are independent draws: the 20% admitted to an
   experiment still split 50/50, not "the users who would have gotten treatment
   anyway".
@@ -172,12 +178,23 @@ document form `{ "flags": [...], "segments": [...] }` once segments are in play.
 
 Operators: `exists`, `notExists`, `eq`, `neq`, `in`, `notIn`, `contains`,
 `startsWith`, `endsWith`, `gt`, `gte`, `lt`, `lte`, `semverEq`, `semverGt`,
-`semverGte`, `semverLt`, `semverLte`, `inSegment`, `notInSegment`. Array-valued
-attributes are matched as sets, so `roles: ["admin", "billing"]` satisfies
-`in: ["admin"]`, and each element is read the way the operator reads a single
-value — `roles: ["administrator"]` satisfies `contains: "admin"`, exactly as
-`roles: "administrator"` does. Everything fails closed: a missing attribute, a wrong type, an
-unknown segment, or an operator from a newer control plane matches nothing.
+`semverGte`, `semverLt`, `semverLte`, `inSegment`, `notInSegment`.
+
+Array-valued attributes are matched as sets by the equality and set operators,
+so `roles: ["admin", "billing"]` satisfies `eq: "admin"` and `in: ["admin"]` and
+fails `neq: "admin"` and `notIn: ["admin"]` — a rule written to exclude a cohort
+never targets it. Each element is read the way the operator reads a single value,
+so `roles: ["administrator"]` satisfies `contains: "admin"`, exactly as
+`roles: "administrator"` does. The ordering operators (`gt`, `lt`, the `semver*`
+family) and the anchored string ones (`startsWith`, `endsWith`) have no set
+reading and simply do not match a compound attribute.
+
+`targetingKey` is the one attribute conditions read through the same identity
+rule bucketing uses, so it compares as the string it is bucketed as: a context
+carrying `targetingKey: 42` satisfies both `eq: 42` and `eq: "42"`.
+
+Everything fails closed: a missing attribute, a wrong type, an unknown segment,
+or an operator from a newer control plane matches nothing.
 
 ## Usage
 

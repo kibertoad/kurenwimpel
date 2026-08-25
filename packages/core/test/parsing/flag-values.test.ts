@@ -89,3 +89,29 @@ describe('a targeting key claimed twice', () => {
     ).toThrow(/targeting key "u1" appears in more than one target/u);
   });
 });
+
+describe('the operands a set condition carries', () => {
+  const withList = (value: unknown): unknown => ({
+    ...valid,
+    rules: [
+      { id: 'r', conditions: [{ attribute: 'seats', operator: 'in', value }], variant: 'on' },
+    ],
+  });
+
+  it('rejects a non-finite number the way every other numeric field does', () => {
+    // The rule comparison bounds, weights, variant values and metadata all
+    // follow. A NaN entry equals nothing — itself included — so `in` could
+    // never match it and `notIn` would carry a member it can never exclude.
+    for (const entry of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      expect(() => parseFlagDefinition(withList([entry]))).toThrow(
+        /needs an array of strings or finite numbers/u,
+      );
+    }
+  });
+
+  it('still accepts the strings and finite numbers a control plane actually ships', () => {
+    expect(parseFlagDefinition(withList(['pro', 10, -1, 0]))).toMatchObject({
+      rules: [{ conditions: [{ value: ['pro', 10, -1, 0] }] }],
+    });
+  });
+});
