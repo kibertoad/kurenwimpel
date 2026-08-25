@@ -7,7 +7,8 @@
  * request path — the same trade segments make.
  */
 
-import type { FlagDefinition } from '../model/flag.js';
+import type { FlagDefinition, VariantTarget } from '../model/flag.js';
+import { isRecord } from '../parsing/primitives.js';
 
 /** Per flag key, the variant each individually targeted key is pinned to. */
 export type TargetIndex = ReadonlyMap<string, ReadonlyMap<string, string>>;
@@ -21,11 +22,12 @@ export type TargetIndex = ReadonlyMap<string, ReadonlyMap<string, string>>;
  * flag can reach that case.
  */
 export function compileTargets(flag: FlagDefinition): ReadonlyMap<string, string> | undefined {
-  if (flag.targets === undefined || flag.targets.length === 0) return undefined;
+  const targets = flag.targets;
+  if (!isTargetList(targets) || targets.length === 0) return undefined;
 
   const byKey = new Map<string, string>();
-  for (const target of flag.targets) {
-    if (!isKeyList(target.keys)) continue;
+  for (const target of targets) {
+    if (!isUsableTarget(target)) continue;
 
     for (const key of target.keys) {
       if (!byKey.has(key)) byKey.set(key, target.variant);
@@ -36,12 +38,32 @@ export function compileTargets(flag: FlagDefinition): ReadonlyMap<string, string
 }
 
 /**
- * Whether a target's `keys` really is a list. Hand-built flags reach this too,
- * and one that is not a list targets nobody rather than being iterated for
- * whatever it happens to yield.
+ * Whether a flag's `targets` really is a list.
+ *
+ * A predicate rather than a bare `Array.isArray`, which narrows an
+ * already-typed list to `any[]` and takes the element type with it — the same
+ * reason `segments.ts` confines its own assertion to one helper.
  */
-function isKeyList(keys: readonly string[]): boolean {
-  return Array.isArray(keys);
+function isTargetList(
+  targets: readonly VariantTarget[] | undefined,
+): targets is readonly VariantTarget[] {
+  return Array.isArray(targets);
+}
+
+/**
+ * Whether one entry of that list is a target the fold can read: an object,
+ * carrying a list of keys.
+ *
+ * Both halves matter, and every caller is a reason. `buildTargetIndex` runs
+ * over every flag of every snapshot, so a single hand-built target that is
+ * `null` — or a number, or a string — used to throw out of `createSnapshot`
+ * and cost the whole refresh its ruleset, where the very same definition
+ * handed to `evaluateFlag` degrades to one flag reporting INVALID_DEFINITION.
+ * The rule is the one the rest of the engine follows: a target that cannot be
+ * read targets nobody.
+ */
+function isUsableTarget(target: VariantTarget): boolean {
+  return isRecord(target) && Array.isArray(target.keys);
 }
 
 /**

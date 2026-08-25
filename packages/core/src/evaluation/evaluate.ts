@@ -23,7 +23,7 @@ import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
 import { isKeyedDefinition } from '../parsing/primitives.js';
 import { drawAllocation, settledAllocation } from './bucketing.js';
-import { matchesConditions, readTargetingKey } from './conditions.js';
+import { matchesRule, readTargetingKey } from './conditions.js';
 import type { SegmentMap } from './conditions.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
 import { foldedTargets } from './targets.js';
@@ -263,10 +263,9 @@ function matchRule<T extends FlagValue>(
   salt: string,
 ): EvaluationResult<T> | undefined {
   for (const rule of flag.rules ?? []) {
-    // An empty condition list means "everyone", so a rule carrying no list at
-    // all must not be read as one: fail closed and skip it.
-    if (!Array.isArray(rule.conditions)) continue;
-    if (!matchesConditions(rule.conditions, context, environment.segments)) continue;
+    // Skipping a rule that cannot be matched at all is decided in one place for
+    // flag rules and segment rules alike; see {@link matchesRule}.
+    if (!matchesRule(rule, context, environment.segments)) continue;
 
     if (rule.rollout !== undefined) {
       const picked = pickVariant(rule.rollout, context, salt, rule.id);
@@ -370,10 +369,38 @@ function isGatedOff(reason: EvaluationReason): boolean {
  * allocation at all, memo or no memo. The root's own key has to go on the
  * chain, or a hand-built flag naming itself would recurse instead of being
  * reported as a cycle.
+ *
+ * The two shapes are told apart by what a chain carries rather than by
+ * `instanceof Map`, which `segments.ts` refuses for the same reason: a memo
+ * built in another realm — a `vm` context, a worker, a second copy of the
+ * package in one bundle — is exactly what it claims to be and still fails the
+ * test. Read as a chain, it would dereference a `visiting` set it does not
+ * have, and the TypeError would unwind into {@link evaluateFlag}'s catch and
+ * report a perfectly good flag as an unusable definition.
  */
 function chainFrom(key: string, trail: PrerequisiteTrail | undefined): PrerequisiteChain {
-  if (trail !== undefined && !(trail instanceof Map)) return trail;
-  return { visiting: new Set([key]), memo: trail ?? new Map() };
+  if (isChain(trail)) return trail;
+  return { visiting: new Set([key]), memo: isMemo(trail) ? trail : new Map() };
+}
+
+/** A trail that has already started a chain is the one carrying its flags. */
+function isChain(trail: unknown): trail is PrerequisiteChain {
+  return typeof trail === 'object' && trail !== null && 'visiting' in trail;
+}
+
+/**
+ * Whether the memo handed over can be used as one.
+ *
+ * {@link createSharedMemo} is the documented way to make one, but the
+ * parameter is public and a JavaScript caller can pass anything at all. A
+ * fresh memo costs one allocation on a path that was going to allocate a `Set`
+ * regardless, and keeps the walk from throwing over the caller's mistake.
+ */
+function isMemo(trail: unknown): trail is SharedPrerequisiteMemo {
+  if (typeof trail !== 'object' || trail === null) return false;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
+  const candidate = trail as SharedPrerequisiteMemo;
+  return typeof candidate.get === 'function' && typeof candidate.set === 'function';
 }
 
 /**
@@ -442,6 +469,13 @@ function matchTarget(
   // Already resolved through {@link readTargetingKey}, which applies the one
   // identity rule the whole engine shares: an own property, and a usable one.
   if (targetingKey === undefined) return undefined;
+
+  // A flag that targets nobody — the overwhelming majority of any ruleset — is
+  // deliberately left out of the snapshot's index, so probing it would miss
+  // and send every such flag on to the fold memo for an answer already visible
+  // here. `evaluateAll` pays both lookups once per flag in the ruleset.
+  const targets = flag.targets;
+  if (targets === undefined || targets.length === 0) return undefined;
 
   // A snapshot has folded every flag's targets into one lookup, so the request
   // path is a single probe however many keys are listed. A flag reaching here

@@ -8,9 +8,10 @@
  */
 
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
-import type { Condition } from '../model/flag.js';
-import type { Segment, SegmentDefinition } from '../model/segment.js';
-import { compileSegment, isCompiledSegment } from './segments.js';
+import type { Condition, TargetingRule } from '../model/flag.js';
+import type { Segment, SegmentDefinition, SegmentRule } from '../model/segment.js';
+import { isRecord } from '../parsing/primitives.js';
+import { readySegment } from './segments.js';
 import { compareVersions } from './semver.js';
 
 export type SegmentMap = ReadonlyMap<string, Segment>;
@@ -22,6 +23,26 @@ export function matchesConditions(
   segments?: SegmentMap,
 ): boolean {
   return conditions.every((condition) => matchesCondition(condition, context, segments));
+}
+
+/**
+ * Whether one rule of a flag or of a segment matches — the check that decides
+ * whether a rule can be matched at all, and then whether it does.
+ *
+ * An empty condition list means "everyone", so a rule carrying no list at all
+ * must not be read as one: it fails closed and is skipped, and so is a rule
+ * that is not an object in the first place. Hand-built definitions reach both
+ * callers, and the guard used to be written out in each of them, comment and
+ * all — the shape that has already let two copies of `isKeyedDefinition` drift
+ * apart over whether an array counts.
+ */
+export function matchesRule(
+  rule: TargetingRule | SegmentRule,
+  context: EvaluationContext,
+  segments?: SegmentMap,
+): boolean {
+  if (!isRecord(rule) || !Array.isArray(rule.conditions)) return false;
+  return matchesConditions(rule.conditions, context, segments);
 }
 
 /**
@@ -71,6 +92,32 @@ export function readTargetingKey(context: EvaluationContext): string | undefined
 }
 
 /**
+ * The value a condition tests, which for the targeting key is the identity it
+ * resolves to and for every other attribute is whatever the context holds.
+ *
+ * The targeting key is the one attribute that is always an identity, so the
+ * rule {@link identityOf} states — every consumer applies the *same* one — has
+ * to reach conditions too, or a context answers two ways about a single
+ * attribute. It closed the prototype-chain half of that split and left the
+ * rest: `targetingKey: ''` read as present to `exists` and served a variant
+ * off it, while the very same context was TARGETING_KEY_MISSING to every
+ * bucketed path; `targetingKey: 42` matched `eq: 42` here while the included
+ * list of a segment, individual targets, and bucketing all knew it as "42".
+ *
+ * Only the targeting key. `bucketBy` can promote any attribute to an identity
+ * for one flag, but a condition cannot know which — and `plan: ''` is an
+ * ordinary empty attribute that `exists` should answer for truthfully.
+ */
+function readConditionValue(
+  context: EvaluationContext,
+  attribute: string,
+): AttributeValue | undefined {
+  return attribute === 'targetingKey'
+    ? readTargetingKey(context)
+    : readAttribute(context, attribute);
+}
+
+/**
  * Evaluates a single predicate.
  *
  * Array-valued attributes are treated as sets: `in` and `contains` match when
@@ -86,7 +133,7 @@ export function matchesCondition(
     return matchesSegmentCondition(condition, context, segments);
   }
 
-  const actual = readAttribute(context, condition.attribute);
+  const actual = readConditionValue(context, condition.attribute);
 
   switch (condition.operator) {
     case 'exists': {
@@ -151,13 +198,15 @@ export function matchesCondition(
  * every membership test and still read a segment carrying its key lists as
  * plain arrays — a perfectly ordinary {@link SegmentDefinition} — as a segment
  * with no keys in it at all.
+ *
+ * The compiling itself is paid once per definition rather than once per test;
+ * see {@link readySegment}.
  */
 export function isInSegment(
   segment: Segment | SegmentDefinition,
   context: EvaluationContext,
 ): boolean {
-  const ready = isCompiledSegment(segment) ? segment : compileSegment(segment);
-  return matchesCompiledSegment(ready, context);
+  return matchesCompiledSegment(readySegment(segment), context);
 }
 
 /** Membership against a segment already known to have the compiled shape. */
@@ -171,11 +220,10 @@ function matchesCompiledSegment(segment: Segment, context: EvaluationContext): b
   }
 
   for (const rule of segment.rules) {
-    // The same rule as flag targeting applies: an empty condition list means
-    // "everyone", so a rule carrying no list at all must not be read as one.
-    // The compiler validates that a segment has rules, not what is in them.
-    if (!Array.isArray(rule.conditions)) continue;
-    if (matchesConditions(rule.conditions, context)) return true;
+    // Matched without a segment map, and skipped when it cannot be matched at
+    // all — see {@link matchesRule}. The compiler validates that a segment has
+    // rules, not what is in them.
+    if (matchesRule(rule, context)) return true;
   }
 
   return false;
@@ -293,13 +341,31 @@ function matchesNumber(
   }
 }
 
+/**
+ * An array-valued attribute is treated as a set: `contains` matches when any
+ * element does.
+ *
+ * Any element *contains* it, not any element equals it — the operator has to
+ * mean the same thing whatever type the attribute happens to have. Element
+ * equality made `roles: ['administrator']` fail a `contains: 'admin'` rule
+ * that `roles: 'administrator'` passed, so an operator who wrote the rule
+ * against a list and tested it against a single-valued context got the
+ * opposite answer from the one they shipped. Equality still matches, being the
+ * substring case where the whole element is the substring; nothing that
+ * matched before stops matching.
+ *
+ * Elements of a type no substring test can read are skipped rather than
+ * compared, which is the filter {@link listMembership} already applies.
+ */
 function matchesString(
   operator: 'contains' | 'startsWith' | 'endsWith',
   actual: AttributeValue | undefined,
   expected: string,
 ): boolean {
   if (operator === 'contains' && Array.isArray(actual)) {
-    return (actual as readonly unknown[]).includes(expected);
+    return (actual as readonly unknown[]).some(
+      (item) => typeof item === 'string' && item.includes(expected),
+    );
   }
   if (typeof actual !== 'string') return false;
 

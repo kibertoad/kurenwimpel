@@ -199,3 +199,70 @@ describe('provider lifecycle', () => {
     expect(client.getBoolean('new-checkout', false)).toBe(true);
   });
 });
+
+/** A provider that always fails, counting how often it was actually asked. */
+const failing = (): { provider: FlagProvider; loads: () => number } => {
+  let loads = 0;
+  return {
+    provider: {
+      name: 'flaky',
+      load: async () => {
+        loads += 1;
+        await Promise.resolve();
+        throw new Error('control plane down');
+      },
+    },
+    loads: () => loads,
+  };
+};
+
+describe('a failed load is reported once, however many callers joined it', () => {
+  it('does not fan one provider failure out to an onError call per refresh', async () => {
+    // Overlapping refreshes share a single trip to the provider, so reporting
+    // on the way out raised an alert per queued poll for one failed fetch —
+    // and any failure counter behind the hook counted the outage several
+    // times over.
+    const errors: Error[] = [];
+    const { provider, loads } = failing();
+    const client = new FeatureFlagClient({
+      provider,
+      onError: (error: Error) => errors.push(error),
+    });
+
+    await Promise.all([client.refresh(), client.refresh(), client.refresh()]);
+
+    expect(loads()).toBe(1);
+    expect(errors).toHaveLength(1);
+  });
+
+  it('still reports each load that actually happened', async () => {
+    const errors: Error[] = [];
+    const { provider } = failing();
+    const client = new FeatureFlagClient({
+      provider,
+      onError: (error: Error) => errors.push(error),
+    });
+
+    await client.refresh();
+    await client.refresh();
+
+    expect(errors).toHaveLength(2);
+  });
+
+  it('still rethrows at init while a joined refresh reports', async () => {
+    const errors: Error[] = [];
+    const { provider, loads } = failing();
+    const client = new FeatureFlagClient({
+      provider,
+      onError: (error: Error) => errors.push(error),
+    });
+
+    const started = client.init();
+    const refreshed = client.refresh();
+
+    await expect(started).rejects.toThrow(/control plane down/u);
+    await expect(refreshed).resolves.toBe(false);
+    expect(loads()).toBe(1);
+    expect(errors).toHaveLength(1);
+  });
+});

@@ -46,6 +46,41 @@ function toRuleList(rules: readonly SegmentRule[] | undefined): readonly Segment
 }
 
 /**
+ * One definition's compiled form, remembered against the definition itself.
+ *
+ * Weakly held, so a definition dropped by a refresh is not kept alive by the
+ * memo — the same trade `targets.ts` makes for its folds.
+ */
+const compiled = new WeakMap<SegmentDefinition, Segment>();
+
+/**
+ * The compiled form of a segment, compiled at most once per definition.
+ *
+ * A snapshot compiles its segments up front, so the request path normally
+ * meets nothing but finished ones and this is a single shape check. What it
+ * guards is the other path: a segment reaching evaluation without the compiler
+ * — hand-built, or an `EvaluationEnvironment` assembled straight from a JSON
+ * payload — used to be compiled again on *every* membership test, allocating
+ * two key sets and copying the rule list per evaluation. That is exactly the
+ * per-request cost this module exists to remove, and a million-key segment
+ * paid it a million insertions at a time.
+ *
+ * A definition mutated after its first membership test goes on being matched
+ * against the form compiled then, which is the staleness a snapshot's compiled
+ * segments have by construction.
+ */
+export function readySegment(segment: Segment | SegmentDefinition): Segment {
+  if (isCompiledSegment(segment)) return segment;
+
+  const known = compiled.get(segment);
+  if (known !== undefined) return known;
+
+  const ready = compileSegment(segment);
+  compiled.set(segment, ready);
+  return ready;
+}
+
+/**
  * True when the value is already a compiled {@link Segment}.
  *
  * All three compiled fields are checked, not just `included`. Recognising a

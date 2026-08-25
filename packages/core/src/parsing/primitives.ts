@@ -88,6 +88,86 @@ export function isScalarList(value: unknown): value is (string | number)[] {
 }
 
 /**
+ * How deep a value may nest before the parser calls it broken: far past any
+ * real flag payload, and short enough that walking it cannot exhaust the stack
+ * on the way to finding out.
+ */
+const MAX_JSON_DEPTH = 100;
+
+/**
+ * The first thing inside a value that JSON cannot carry, named against the
+ * path it sits at — or `undefined` when the whole value is expressible.
+ *
+ * Only the top level of a variant used to be checked, so the finite-number
+ * rule stopped at the surface: `{ perMinute: Infinity }` parsed clean and
+ * reached the OFREP wire as `{"perMinute":null}`, which is the failure the
+ * same check on `metadata` says out loud it exists to prevent — "an
+ * unserveable annotation discovered at the protocol layer rather than here,
+ * where the operator can still be told which field it was". `undefined`, a
+ * function, and a symbol are worse still: `JSON.stringify` drops the key
+ * outright, so the served object is missing a field rather than holding a null
+ * one. A bigint throws.
+ *
+ * Iterative, and depth-bounded rather than cycle-checked. A control plane
+ * cannot ship a cycle — JSON has none — but a compiled-in definition handed
+ * straight to `parseFlagDefinition` can, and one bound catches both that and a
+ * payload nested past anything a stack will hold. A value repeated at two
+ * places is not a cycle and stays legal; it is walked twice, exactly as
+ * `cloneJson` copies it twice.
+ */
+export function jsonDefect(value: unknown): string | undefined {
+  const stack: { readonly value: unknown; readonly path: string; readonly depth: number }[] = [
+    { value, path: '', depth: 0 },
+  ];
+
+  while (stack.length > 0) {
+    const { value: current, path, depth } = stack.pop()!;
+
+    if (depth > MAX_JSON_DEPTH) {
+      return `nests more than ${MAX_JSON_DEPTH} levels deep at ${pathName(path)}`;
+    }
+
+    if (Array.isArray(current)) {
+      for (const [index, item] of (current as readonly unknown[]).entries()) {
+        stack.push({ value: item, path: `${path}[${index}]`, depth: depth + 1 });
+      }
+      continue;
+    }
+
+    if (isRecord(current)) {
+      for (const field of Object.keys(current)) {
+        stack.push({
+          value: current[field],
+          path: path === '' ? field : `${path}.${field}`,
+          depth: depth + 1,
+        });
+      }
+      continue;
+    }
+
+    if (isJsonScalar(current)) continue;
+    return `holds ${describeUnserveable(current)} at ${pathName(path)}`;
+  }
+
+  return undefined;
+}
+
+function isJsonScalar(value: unknown): boolean {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return true;
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+/** What to call the value in the message: `NaN` and `Infinity` by name. */
+function describeUnserveable(value: unknown): string {
+  if (typeof value === 'number') return String(value);
+  return value === undefined ? 'undefined' : `a ${typeof value}`;
+}
+
+function pathName(path: string): string {
+  return path === '' ? 'its root' : path;
+}
+
+/**
  * A frozen deep copy of a validated JSON value.
  *
  * A snapshot promises an immutable, point-in-time view, and that promise has
@@ -107,13 +187,31 @@ export function isScalarList(value: unknown): value is (string | number)[] {
  * path nothing, which a copy per evaluation would not.
  *
  * Hand-rolled rather than `structuredClone`: core does not commit consumers to
- * a platform global (see the TextEncoder note in `bucketing.ts`), and this
- * cannot throw on a value that only looks like JSON.
+ * a platform global (see the TextEncoder note in `bucketing.ts`), and it copies
+ * a value it does not understand — a function, a symbol — straight through
+ * rather than throwing on it, which is what lets the callers decide what is
+ * serveable.
+ *
+ * The one thing it does refuse is a value nested past
+ * {@link MAX_JSON_DEPTH} — a cycle, or a payload deeper than the stack can
+ * hold. It refuses it as a {@link FlagParseError}, the failure every caller of
+ * the parser already catches, rather than as the `RangeError` an unbounded
+ * recursion would raise from underneath a documented `@throws
+ * {FlagParseError}`. `references.ts` walks its own graph iteratively for the
+ * same reason: "the parser must not put its own stack at risk finding out".
  */
 export function cloneJson<T>(value: T): T {
+  return cloneAtDepth(value, 0);
+}
+
+function cloneAtDepth<T>(value: T, depth: number): T {
+  if (depth > MAX_JSON_DEPTH) {
+    fail(`value nests more than ${MAX_JSON_DEPTH} levels deep`);
+  }
+
   if (Array.isArray(value)) {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    return Object.freeze(value.map((item: unknown) => cloneJson(item))) as T;
+    return Object.freeze(value.map((item: unknown) => cloneAtDepth(item, depth + 1))) as T;
   }
 
   if (isRecord(value)) {
@@ -122,7 +220,7 @@ export function cloneJson<T>(value: T): T {
       // Defined rather than assigned: `copy['__proto__'] = x` would run the
       // inherited setter and silently drop the key instead of copying it.
       Object.defineProperty(copy, field, {
-        value: cloneJson(value[field]),
+        value: cloneAtDepth(value[field], depth + 1),
         enumerable: true,
         writable: true,
         configurable: true,

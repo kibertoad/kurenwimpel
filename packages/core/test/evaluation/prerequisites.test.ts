@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { createSharedMemo, evaluateFlag } from '../../src/index.js';
-import type { EvaluationEnvironment, FlagDefinition } from '../../src/index.js';
+import type {
+  EvaluationEnvironment,
+  EvaluationResult,
+  FlagDefinition,
+  SharedPrerequisiteMemo,
+} from '../../src/index.js';
 
 const flag = (key: string, overrides: Partial<FlagDefinition> = {}): FlagDefinition => ({
   key,
@@ -15,6 +20,19 @@ const flag = (key: string, overrides: Partial<FlagDefinition> = {}): FlagDefinit
 const environmentOf = (...flags: FlagDefinition[]): EvaluationEnvironment => ({
   flags: new Map(flags.map((definition) => [definition.key, definition])),
 });
+
+/**
+ * Everything `createSharedMemo` returns except a `Map` instance — what a memo
+ * built in another realm looks like from here: a `vm` context, a worker, a
+ * second copy of the package in one bundle.
+ */
+const foreignMemo = (): SharedPrerequisiteMemo => {
+  const store = new Map<string, EvaluationResult>();
+  return {
+    get: (key: string) => store.get(key),
+    set: (key: string, value: EvaluationResult) => store.set(key, value),
+  } as unknown as SharedPrerequisiteMemo;
+};
 
 describe('prerequisites', () => {
   const dependent = flag('checkout-redesign', {
@@ -333,5 +351,35 @@ describe('a memo shared across a bulk evaluation', () => {
       expect(shared).toEqual(solo);
       expect(shared.reason).toBe('PREREQUISITE_FAILED');
     }
+  });
+});
+
+describe('the shared memo is recognised by what it does, not by instanceof', () => {
+  const dependent = flag('checkout-redesign', {
+    prerequisites: [{ flag: 'new-backend', variants: ['on'] }],
+  });
+  const environment = environmentOf(dependent, flag('new-backend'));
+
+  it('evaluates through one rather than reading it as a chain already walked', () => {
+    // Misread as a chain, it dereferenced a `visiting` set it does not have,
+    // and the TypeError was reported as a perfectly good flag being unusable.
+    const memo = foreignMemo();
+    const result = evaluateFlag(dependent, {}, environment, memo);
+
+    expect(result.variant).toBe('on');
+    expect(result.errorCode).toBeUndefined();
+    expect(memo.get('new-backend')?.variant).toBe('on');
+  });
+
+  it('starts a fresh one when what it was handed is not a memo at all', () => {
+    const result = evaluateFlag(
+      dependent,
+      {},
+      environment,
+      {} as unknown as SharedPrerequisiteMemo,
+    );
+
+    expect(result.variant).toBe('on');
+    expect(result.errorCode).toBeUndefined();
   });
 });

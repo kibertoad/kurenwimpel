@@ -7,7 +7,7 @@ import type { FlagValue, JsonObject } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
 import type { FlagProvider } from './provider.js';
-import { EMPTY_SNAPSHOT } from './snapshot.js';
+import { completeSnapshot, EMPTY_SNAPSHOT, environmentOf } from './snapshot.js';
 import type { FlagSnapshot } from './snapshot.js';
 
 export interface ClientErrorInfo {
@@ -168,7 +168,17 @@ export class FeatureFlagClient {
     // Returning a bare `false` for that one would read as "nothing to
     // install", when in fact nothing has ever been installed and every lookup
     // is about to be answered PROVIDER_NOT_READY.
-    if (outcome.status === 'failed') this.#report(outcome.error, 'load');
+    //
+    // Once per load, not once per caller. Overlapping refreshes join a single
+    // trip to the provider, and reporting on the way out fanned that one
+    // failure into an `onError` call each: a `PollingFlagClient` whose control
+    // plane is slower than its poll interval raised an alert per queued poll
+    // for one failed fetch, and any failure counter behind the hook counted
+    // the same outage several times over.
+    if (outcome.status === 'failed' && !outcome.reported) {
+      outcome.reported = true;
+      this.#report(outcome.error, 'load');
+    }
 
     return outcome.status === 'installed';
   }
@@ -199,7 +209,7 @@ export class FeatureFlagClient {
         // snapshot to keep serving: coming up ready on an empty one would
         // answer every lookup FLAG_NOT_FOUND.
         return isFirstLoad
-          ? { status: 'failed', error: this.#noFirstRuleset() }
+          ? { status: 'failed', error: this.#noFirstRuleset(), reported: false }
           : { status: 'unchanged' };
       }
 
@@ -209,7 +219,7 @@ export class FeatureFlagClient {
       // Carried as thrown rather than normalised here: `init` rethrows it at
       // its caller, and a service catching its own provider's error type
       // should still find it. `#report` does the normalising.
-      return { status: 'failed', error };
+      return { status: 'failed', error, reported: false };
     }
   }
 
@@ -227,10 +237,13 @@ export class FeatureFlagClient {
   }
 
   #install(snapshot: FlagSnapshot): void {
-    this.#snapshot = snapshot;
+    // Completed on the way in, so that the snapshot this client serves — and
+    // hands back through `snapshot` — carries every lookup evaluation reads,
+    // whoever built it. See {@link completeSnapshot}.
+    this.#snapshot = completeSnapshot(snapshot);
     // Derived once per snapshot rather than per evaluation: the hot path should
     // not be allocating an environment object per lookup.
-    this.#environment = environmentOf(snapshot);
+    this.#environment = environmentOf(this.#snapshot);
     this.#ready = true;
   }
 
@@ -496,20 +509,15 @@ export class FeatureFlagClient {
 /**
  * What one trip to the provider came back with. "Unchanged" and "failed" are
  * kept apart because the first is a healthy answer and the second is not.
+ *
+ * `reported` is the one mutable field, and it is what makes "once per load"
+ * mean once: every caller that joined the load is handed this same object, so
+ * whichever of them reports the failure first records that it has been said.
  */
 type LoadOutcome =
   | { readonly status: 'installed' }
   | { readonly status: 'unchanged' }
-  | { readonly status: 'failed'; readonly error: unknown };
-
-/** The lookups evaluation needs from a snapshot, in the shape it wants them. */
-function environmentOf(snapshot: FlagSnapshot): EvaluationEnvironment {
-  return {
-    flags: snapshot.flags,
-    segments: snapshot.segments,
-    targetIndex: snapshot.targetIndex,
-  };
-}
+  | { readonly status: 'failed'; readonly error: unknown; reported: boolean };
 
 /** An {@link EvaluationResult} whose value is guaranteed present, defaulted if need be. */
 export type ResolvedEvaluation<T extends FlagValue> = Omit<EvaluationResult<T>, 'value'> & {

@@ -45,8 +45,7 @@ export class HttpFlagProvider implements FlagProvider {
 
   async load(previous?: FlagSnapshot): Promise<FlagSnapshot | null> {
     const headers: Record<string, string> = { accept: 'application/json', ...this.#headers };
-    const validator = previous?.version;
-    if (validator !== undefined) headers['if-none-match'] = validator;
+    if (previous?.version !== undefined) headers['if-none-match'] = previous.version;
 
     const response = await this.#fetch(this.#url, {
       headers,

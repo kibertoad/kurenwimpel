@@ -288,3 +288,56 @@ describe('definitions the parser would have rejected', () => {
     expect(result).toMatchObject({ value: false, variant: 'off', reason: 'STATIC' });
   });
 });
+
+describe('rules and targets that reached evaluation without the parser', () => {
+  it('skips a rule it cannot match instead of failing the whole flag', () => {
+    // The same guard segment membership applies, decided in one place now
+    // rather than copied into both.
+    const flag = {
+      ...booleanFlag,
+      rules: [null, { id: 'no-conditions' }, { id: 'ok', conditions: [], variant: 'on' }],
+    } as unknown as FlagDefinition<boolean>;
+
+    const result = evaluateFlag(flag, {});
+
+    expect(result.variant).toBe('on');
+    expect(result.errorCode).toBeUndefined();
+  });
+
+  it('reads past a target it cannot read rather than throwing out of the flag', () => {
+    const flag = {
+      ...booleanFlag,
+      targets: [null, 'nope', { variant: 'on', keys: ['user-1'] }],
+    } as unknown as FlagDefinition<boolean>;
+
+    expect(evaluateFlag(flag, { targetingKey: 'user-1' }).variant).toBe('on');
+    expect(evaluateFlag(flag, { targetingKey: 'user-2' }).variant).toBe('off');
+  });
+
+  it('answers the same through a snapshot index as it does without one', () => {
+    const flag = {
+      ...booleanFlag,
+      targets: [null, { variant: 'on', keys: ['user-1'] }],
+    } as unknown as FlagDefinition<boolean>;
+    const targetIndex = buildTargetIndex([flag]);
+
+    expect(evaluateFlag(flag, { targetingKey: 'user-1' }, { targetIndex }).variant).toBe('on');
+    expect(evaluateFlag(flag, { targetingKey: 'user-2' }, { targetIndex }).variant).toBe('off');
+  });
+
+  it('does not serve off an empty targeting key that bucketing calls missing', () => {
+    const flag: FlagDefinition<boolean> = {
+      ...booleanFlag,
+      rules: [
+        {
+          id: 'has-key',
+          conditions: [{ attribute: 'targetingKey', operator: 'exists' }],
+          variant: 'on',
+        },
+      ],
+    };
+
+    expect(evaluateFlag(flag, { targetingKey: '' }).variant).toBe('off');
+    expect(evaluateFlag(flag, { targetingKey: 'user-1' }).variant).toBe('on');
+  });
+});

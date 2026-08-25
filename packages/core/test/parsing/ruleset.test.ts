@@ -271,6 +271,33 @@ describe('unrecognised keys in a ruleset document', () => {
   it('says nothing about the legacy object form when no document key is present', () => {
     expect(parseRuleset({ 'new-checkout': validFlag }).issues).toEqual([]);
   });
+
+  it('stays quiet about an envelope whose own entries carry a key', () => {
+    // Carrying a `key` is what every definition has in common, and it is not
+    // enough on its own: a named envelope and a link table were reported as
+    // misplaced definitions on every refresh, which is exactly the noise the
+    // check above promises to leave alone.
+    const result = parseRuleset({
+      flags: [validFlag],
+      segments: [validSegment],
+      meta: { key: 'prod-ruleset', revision: 42 },
+      links: { self: { key: 'a' }, next: { key: 'b' } },
+    });
+
+    expect(result.flags).toHaveLength(1);
+    expect(result.issues).toEqual([]);
+  });
+
+  it('still reports a misspelled key holding real definitions', () => {
+    // The typo diagnostic has to survive the narrowing: a definition declares
+    // something to be a definition of, and these do.
+    expect(parseRuleset({ flags: [], flgas: [validFlag] }).issues).toEqual([
+      { at: 'flgas', message: expect.stringMatching(/unrecognised top-level key "flgas"/u) },
+    ]);
+    expect(parseRuleset({ flags: [], segmnets: { beta: validSegment } }).issues).toEqual([
+      { at: 'segmnets', message: expect.stringMatching(/unrecognised top-level key "segmnets"/u) },
+    ]);
+  });
 });
 
 describe('prerequisite cycles', () => {

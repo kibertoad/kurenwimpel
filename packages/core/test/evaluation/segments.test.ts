@@ -120,3 +120,29 @@ describe('isInSegment on segments the compiler never saw', () => {
     expect(isInSegment(hand({}), { targetingKey: 'u1' })).toBe(false);
   });
 });
+
+describe('a segment the compiler never saw is compiled once, not once per test', () => {
+  it('goes on matching against the form taken at the first membership test', () => {
+    // Compiling per test rebuilt both key sets and copied the rule list on
+    // every evaluation — the exact per-request cost this module exists to
+    // remove, paid a million insertions at a time by a million-key segment.
+    // The staleness that buys is the one a snapshot's segments have by
+    // construction, and the trade `foldedTargets` already makes.
+    const definition: SegmentDefinition & { included: string[] } = {
+      key: 'beta',
+      included: ['u1'],
+    };
+
+    expect(isInSegment(definition, { targetingKey: 'u1' })).toBe(true);
+
+    definition.included.push('u2');
+
+    expect(isInSegment(definition, { targetingKey: 'u2' })).toBe(false);
+    expect(isInSegment(definition, { targetingKey: 'u1' })).toBe(true);
+  });
+
+  it('leaves an already-compiled segment untouched', () => {
+    const compiled = compileSegment({ key: 'beta', included: ['u1'] });
+    expect(isInSegment(compiled, { targetingKey: 'u1' })).toBe(true);
+  });
+});

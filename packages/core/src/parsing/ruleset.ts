@@ -123,15 +123,48 @@ function checkDocumentKeys(raw: Record<string, unknown>): FlagParseIssue[] {
  * object.
  *
  * Every form carries the key on the definition itself — the legacy object form
- * is parsed by its values, not by its property names — so requiring one is
- * what separates a definition from any other nested object a document might
- * carry alongside.
+ * is parsed by its values, not by its property names — so a key is necessary.
+ * It is not sufficient, and treating it as though it were is what made this
+ * report the very envelopes the doc comment above promises to leave alone: a
+ * `links: { self: { key: "..." } }` or a `meta: { key: "prod-ruleset" }` drew
+ * "unrecognised top-level key" on every refresh, every thirty seconds, with
+ * nothing the operator could do about it. A definition also declares something
+ * to be a definition *of* — see {@link DEFINITION_FIELDS}.
  */
 function holdsDefinitions(value: unknown): boolean {
-  if (isKeyedDefinition(value)) return true;
+  if (looksLikeDefinition(value)) return true;
   if (isRecord(value)) return holdsDefinitions(Object.values(value));
   if (!Array.isArray(value) || value.length === 0) return false;
-  return value.every((entry: unknown) => isKeyedDefinition(entry));
+  return value.every((entry: unknown) => looksLikeDefinition(entry));
+}
+
+/**
+ * The fields that only a flag or a segment declares. A keyed object carrying
+ * none of them is metadata, not a definition that lost its way.
+ *
+ * The one shape this misses is a segment declaring nothing but its key — every
+ * other field of a segment is optional — which the content check in
+ * `parseSegmentDefinition` would reject anyway, and which is indistinguishable
+ * from an envelope carrying a name. Silence is the right answer there: this is
+ * a diagnostic for a typo, and a diagnostic nobody can act on is worse than
+ * none.
+ */
+const DEFINITION_FIELDS = [
+  'variants',
+  'defaultVariant',
+  'offVariant',
+  'enabled',
+  'targets',
+  'prerequisites',
+  'allocation',
+  'rollout',
+  'rules',
+  'included',
+  'excluded',
+] as const;
+
+function looksLikeDefinition(value: unknown): boolean {
+  return isKeyedDefinition(value) && DEFINITION_FIELDS.some((field) => field in value);
 }
 
 function emptyFlags(): ParseFlagsResult {

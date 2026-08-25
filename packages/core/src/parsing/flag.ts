@@ -24,6 +24,7 @@ import {
   fail,
   isDroppedRule,
   isRecord,
+  jsonDefect,
   optionalString,
   requireFiniteNumber,
   requireString,
@@ -122,6 +123,10 @@ function tolerantVersion(
  * finite number, or a JSON object. A top-level `null` or array is rejected
  * here rather than discovered when the flag cannot be served over the
  * protocol — nest arrays inside an object instead.
+ *
+ * All the way down, not just at the top. An object variant is the one variant
+ * shape with an inside, and the same rule has to hold there: see
+ * {@link jsonDefect}.
  */
 function parseVariants(raw: unknown, key: string): Record<string, FlagValue> {
   if (!isRecord(raw)) fail(`flag ${key}: variants must be an object`);
@@ -142,6 +147,11 @@ function parseVariants(raw: unknown, key: string): Record<string, FlagValue> {
         `flag ${key}: variant ${name} must be a boolean, string, finite number, or JSON object` +
           ' — OFREP cannot carry a top-level null or array',
       );
+    }
+
+    if (isRecord(value)) {
+      const defect = jsonDefect(value);
+      if (defect !== undefined) fail(`flag ${key}: variant ${name} ${defect}`);
     }
   }
 
@@ -201,10 +211,21 @@ function parseTargets(
     }
 
     const keys = requireStringArray(entry['keys'], `flag ${key}: target ${variant} keys`);
+
+    // Two defects, told apart, because they send an operator to different
+    // places. `seen` spans the whole list and catches a key two targets both
+    // claim; `own` is this target's own list, and a key repeated inside it
+    // reported as appearing "in more than one target" sent whoever read it
+    // looking for a second target that does not exist.
+    const own = new Set<string>();
     for (const targetKey of keys) {
+      if (own.has(targetKey)) {
+        fail(`flag ${key}: target ${variant} lists targeting key "${targetKey}" more than once`);
+      }
       if (seen.has(targetKey)) {
         fail(`flag ${key}: targeting key "${targetKey}" appears in more than one target`);
       }
+      own.add(targetKey);
       seen.add(targetKey);
     }
 

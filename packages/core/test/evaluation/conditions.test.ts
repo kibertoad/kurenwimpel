@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { compileSegment, isInSegment, matchesCondition } from '../../src/index.js';
-import type { AttributeValue, Condition, EvaluationContext, SegmentMap } from '../../src/index.js';
+import type {
+  AttributeValue,
+  Condition,
+  EvaluationContext,
+  SegmentDefinition,
+  SegmentMap,
+} from '../../src/index.js';
 
 const check = (condition: Condition, context: Record<string, AttributeValue>): boolean =>
   matchesCondition(condition, context);
@@ -287,5 +293,83 @@ describe('the targeting key is read like every other attribute', () => {
 
     expect(isInSegment(segment, numericKey(12_345))).toBe(false);
     expect(isInSegment(segment, numericKey(999))).toBe(true);
+  });
+});
+
+describe('the targeting key answers conditions the way targeting reads it', () => {
+  it('treats an empty targeting key as absent, as every bucketed path does', () => {
+    // One context used to answer both ways about one attribute: `exists`
+    // matched and served a variant off it, while the same context was
+    // TARGETING_KEY_MISSING to every split on the flag.
+    expect(check({ attribute: 'targetingKey', operator: 'exists' }, { targetingKey: '' })).toBe(
+      false,
+    );
+    expect(check({ attribute: 'targetingKey', operator: 'notExists' }, { targetingKey: '' })).toBe(
+      true,
+    );
+    expect(
+      check({ attribute: 'targetingKey', operator: 'eq', value: '' }, { targetingKey: '' }),
+    ).toBe(false);
+  });
+
+  it('reads a numeric targeting key as the identity everything else knows', () => {
+    // A segment's included list, individual targets, and bucketing all resolve
+    // it to "999"; conditions used to compare the raw number.
+    expect(
+      matchesCondition(
+        { attribute: 'targetingKey', operator: 'eq', value: '999' },
+        numericKey(999),
+      ),
+    ).toBe(true);
+    expect(
+      matchesCondition({ attribute: 'targetingKey', operator: 'exists' }, numericKey(999)),
+    ).toBe(true);
+  });
+
+  it('leaves every other attribute exactly as the context holds it', () => {
+    // `bucketBy` can promote any attribute to an identity for one flag, but a
+    // condition cannot know which — and an empty `plan` is an ordinary empty
+    // attribute that `exists` should answer for truthfully.
+    expect(check({ attribute: 'plan', operator: 'exists' }, { plan: '' })).toBe(true);
+    expect(check({ attribute: 'plan', operator: 'eq', value: '' }, { plan: '' })).toBe(true);
+    expect(check({ attribute: 'seats', operator: 'eq', value: 42 }, { seats: 42 })).toBe(true);
+  });
+});
+
+describe('contains means the same thing whatever type the attribute has', () => {
+  const roles: Condition = { attribute: 'roles', operator: 'contains', value: 'admin' };
+
+  it('matches an element that contains the value, not only one that equals it', () => {
+    // Element equality made a list-valued attribute answer the opposite of a
+    // single-valued one for the very same rule.
+    expect(check(roles, { roles: ['admin'] })).toBe(true);
+    expect(check(roles, { roles: ['administrator'] })).toBe(true);
+    expect(check(roles, { roles: 'administrator' })).toBe(true);
+    expect(check(roles, { roles: ['billing'] })).toBe(false);
+    expect(check(roles, { roles: [] })).toBe(false);
+  });
+
+  it('skips elements no substring test can read', () => {
+    expect(check(roles, { roles: [1, true, null] })).toBe(false);
+    expect(check(roles, { roles: [null, 'admin'] })).toBe(true);
+  });
+});
+
+/** A segment whose rules reached evaluation without the parser. */
+const withRules = (rules: unknown): SegmentDefinition =>
+  ({ key: 'beta', rules }) as unknown as SegmentDefinition;
+
+describe('a segment rule that cannot be matched is skipped', () => {
+  it('walks past a rule carrying no condition list and keeps reading', () => {
+    // An empty condition list means "everyone", so a rule with no list at all
+    // must not be read as one — and must not cost the rules after it either.
+    const segment = withRules([
+      { id: 'broken' },
+      null,
+      { id: 'ok', conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }] },
+    ]);
+
+    expect(isInSegment(segment, { plan: 'pro' })).toBe(true);
+    expect(isInSegment(segment, { plan: 'free' })).toBe(false);
   });
 });

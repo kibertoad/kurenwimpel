@@ -174,7 +174,9 @@ Operators: `exists`, `notExists`, `eq`, `neq`, `in`, `notIn`, `contains`,
 `startsWith`, `endsWith`, `gt`, `gte`, `lt`, `lte`, `semverEq`, `semverGt`,
 `semverGte`, `semverLt`, `semverLte`, `inSegment`, `notInSegment`. Array-valued
 attributes are matched as sets, so `roles: ["admin", "billing"]` satisfies
-`in: ["admin"]`. Everything fails closed: a missing attribute, a wrong type, an
+`in: ["admin"]`, and each element is read the way the operator reads a single
+value — `roles: ["administrator"]` satisfies `contains: "admin"`, exactly as
+`roles: "administrator"` does. Everything fails closed: a missing attribute, a wrong type, an
 unknown segment, or an operator from a newer control plane matches nothing.
 
 ## Usage

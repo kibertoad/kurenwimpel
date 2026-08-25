@@ -46,6 +46,7 @@ export {
   isInSegment,
   matchesCondition,
   matchesConditions,
+  matchesRule,
   readAttribute,
   readTargetingKey,
 } from './evaluation/conditions.js';
@@ -82,5 +83,5 @@ export type {
 } from './runtime/client.js';
 export { StaticProvider } from './runtime/provider.js';
 export type { FlagProvider, StaticProviderContents } from './runtime/provider.js';
-export { createSnapshot, EMPTY_SNAPSHOT } from './runtime/snapshot.js';
+export { completeSnapshot, createSnapshot, EMPTY_SNAPSHOT } from './runtime/snapshot.js';
 export type { FlagSnapshot, SnapshotMeta } from './runtime/snapshot.js';
