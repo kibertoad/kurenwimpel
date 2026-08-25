@@ -1,0 +1,342 @@
+import { describe, expect, it } from 'vitest';
+
+import { FlagParseError, parseFlagDefinition } from '../../src/index.js';
+import type { FlagParseIssue } from '../../src/index.js';
+
+const valid = {
+  key: 'new-checkout',
+  enabled: true,
+  variants: { on: true, off: false },
+  defaultVariant: 'off',
+  offVariant: 'off',
+};
+
+describe('parseFlagDefinition', () => {
+  it('accepts a minimal definition', () => {
+    expect(parseFlagDefinition(valid)).toEqual(valid);
+  });
+
+  it('keeps optional fields only when present', () => {
+    const parsed = parseFlagDefinition(valid);
+    for (const field of ['rules', 'salt', 'targets', 'allocation', 'prerequisites', 'metadata']) {
+      expect(Object.hasOwn(parsed, field)).toBe(false);
+    }
+  });
+
+  it('parses rules, conditions, and rollouts', () => {
+    const parsed = parseFlagDefinition({
+      ...valid,
+      salt: 'v2',
+      version: 3,
+      metadata: { experiment: 'checkout-q3' },
+      rules: [
+        {
+          id: 'beta-testers',
+          conditions: [
+            { attribute: 'plan', operator: 'in', value: ['pro', 'enterprise'] },
+            { attribute: 'seats', operator: 'gte', value: 10 },
+            { attribute: 'appVersion', operator: 'semverGte', value: '2.1.0' },
+            { operator: 'inSegment', segments: ['beta-testers'] },
+          ],
+          rollout: [
+            { variant: 'on', weight: 50 },
+            { variant: 'off', weight: 50 },
+          ],
+        },
+      ],
+    });
+
+    expect(parsed.salt).toBe('v2');
+    expect(parsed.version).toBe(3);
+    expect(parsed.metadata).toEqual({ experiment: 'checkout-q3' });
+    expect(parsed.rules?.[0]?.conditions).toHaveLength(4);
+  });
+
+  it('parses the full experiment surface: targets, allocation, split rollout', () => {
+    const parsed = parseFlagDefinition({
+      ...valid,
+      targets: [{ variant: 'on', keys: ['qa-1', 'qa-2'] }],
+      allocation: { percent: 20, seed: 'run-2' },
+      prerequisites: [{ flag: 'new-backend', variants: ['on'] }],
+      rollout: {
+        bucketBy: 'accountId',
+        seed: 'iteration-3',
+        buckets: [
+          { variant: 'on', weight: 50 },
+          { variant: 'off', weight: 50 },
+        ],
+      },
+    });
+
+    expect(parsed.targets).toEqual([{ variant: 'on', keys: ['qa-1', 'qa-2'] }]);
+    expect(parsed.allocation).toEqual({ percent: 20, seed: 'run-2' });
+    expect(parsed.prerequisites).toEqual([{ flag: 'new-backend', variants: ['on'] }]);
+    expect(parsed.rollout).toMatchObject({ bucketBy: 'accountId', seed: 'iteration-3' });
+  });
+
+  it.each([
+    ['a non-object', 42],
+    ['a missing key', { ...valid, key: undefined }],
+    ['an empty key', { ...valid, key: '' }],
+    ['a non-boolean enabled', { ...valid, enabled: 'yes' }],
+    ['missing variants', { ...valid, variants: undefined }],
+    ['empty variants', { ...valid, variants: {} }],
+    ['a dangling defaultVariant', { ...valid, defaultVariant: 'nope' }],
+    ['a dangling offVariant', { ...valid, offVariant: 'nope' }],
+  ])('rejects %s', (_label, input) => {
+    expect(() => parseFlagDefinition(input)).toThrow(FlagParseError);
+  });
+
+  it.each([
+    ['null', null],
+    ['an array', [1, 2, 3]],
+    ['NaN', Number.NaN],
+  ])('rejects %s as a variant value — OFREP cannot carry it', (_label, value) => {
+    expect(() =>
+      parseFlagDefinition({ ...valid, variants: { on: true, off: false, odd: value } }),
+    ).toThrow(FlagParseError);
+  });
+
+  it('rejects a rule that serves nothing', () => {
+    expect(() => parseFlagDefinition({ ...valid, rules: [{ id: 'r', conditions: [] }] })).toThrow(
+      /must declare a variant or a rollout/u,
+    );
+  });
+
+  it('rejects unknown variant references from rules, targets, and rollouts', () => {
+    expect(() =>
+      parseFlagDefinition({ ...valid, rules: [{ id: 'r', conditions: [], variant: 'ghost' }] }),
+    ).toThrow(/unknown variant/u);
+    expect(() =>
+      parseFlagDefinition({ ...valid, targets: [{ variant: 'ghost', keys: ['u'] }] }),
+    ).toThrow(/unknown variant/u);
+    expect(() =>
+      parseFlagDefinition({ ...valid, rollout: [{ variant: 'ghost', weight: 1 }] }),
+    ).toThrow(/unknown variant/u);
+  });
+
+  it('drops a rule using an unsupported operator and keeps serving the flag', () => {
+    // An operator a newer control plane knows says nothing about the rest of
+    // the definition. Rejecting the flag over it answers FLAG_NOT_FOUND for
+    // every SDK; the rule could never have matched anyway, so dropping it
+    // decides nothing differently.
+    const warnings: FlagParseIssue[] = [];
+    const parsed = parseFlagDefinition(
+      {
+        ...valid,
+        rules: [
+          {
+            id: 'newer',
+            conditions: [{ attribute: 'a', operator: 'matchesGlob', value: '*' }],
+            variant: 'on',
+          },
+          {
+            id: 'known',
+            conditions: [{ attribute: 'plan', operator: 'eq', value: 'pro' }],
+            variant: 'on',
+          },
+        ],
+      },
+      warnings,
+    );
+
+    expect(parsed.rules?.map((rule) => rule.id)).toEqual(['known']);
+    expect(warnings).toEqual([
+      { at: valid.key, message: expect.stringMatching(/unsupported operator matchesGlob/u) },
+    ]);
+  });
+
+  it('still rejects everything else about a rule', () => {
+    // Only the unknown operator is survivable; a malformed value, a dangling
+    // variant, or a missing conditions array is a defect in a rule this
+    // version does understand, and still costs the definition.
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rules: [{ id: 'r', conditions: [{ attribute: 'a', operator: 'gt', value: 'x' }] }],
+      }),
+    ).toThrow(/finite number value/u);
+  });
+
+  it('rejects an operator whose value has the wrong type', () => {
+    const withCondition = (condition: unknown): unknown => ({
+      ...valid,
+      rules: [{ id: 'r', conditions: [condition], variant: 'on' }],
+    });
+
+    expect(() =>
+      parseFlagDefinition(withCondition({ attribute: 'a', operator: 'gt', value: 'ten' })),
+    ).toThrow(/needs a finite number/u);
+    expect(() =>
+      parseFlagDefinition(withCondition({ attribute: 'a', operator: 'in', value: 'pro' })),
+    ).toThrow(/needs an array/u);
+    expect(() =>
+      parseFlagDefinition(withCondition({ attribute: 'a', operator: 'semverGte', value: 'nope' })),
+    ).toThrow(/semantic version/u);
+    expect(() =>
+      parseFlagDefinition(withCondition({ operator: 'inSegment', segments: [] })),
+    ).toThrow(/at least one segment/u);
+  });
+
+  it('rejects a negative rollout weight but accepts a parked all-zero split', () => {
+    expect(() =>
+      parseFlagDefinition({ ...valid, rollout: [{ variant: 'on', weight: -1 }] }),
+    ).toThrow(/non-negative/u);
+    // An experiment parked at zero is a valid flag; evaluation falls through
+    // to the default variant rather than the whole flag disappearing.
+    expect(
+      parseFlagDefinition({ ...valid, rollout: [{ variant: 'on', weight: 0 }] }).rollout,
+    ).toEqual([{ variant: 'on', weight: 0 }]);
+  });
+
+  it('rejects weights that individually pass but sum to Infinity', () => {
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rollout: [
+          { variant: 'on', weight: 1e308 },
+          { variant: 'off', weight: 1e308 },
+        ],
+      }),
+    ).toThrow(/finite total/u);
+  });
+
+  it('rejects a malformed bucketBy or seed instead of silently dropping it', () => {
+    // Silently discarding either would quietly reassign the whole cohort.
+    const buckets = [{ variant: 'on', weight: 100 }];
+    expect(() =>
+      parseFlagDefinition({ ...valid, rollout: { bucketBy: ['accountId'], buckets } }),
+    ).toThrow(/bucketBy/u);
+    expect(() => parseFlagDefinition({ ...valid, rollout: { bucketBy: '', buckets } })).toThrow(
+      /bucketBy/u,
+    );
+    expect(() => parseFlagDefinition({ ...valid, rollout: { seed: 2, buckets } })).toThrow(/seed/u);
+    expect(() => parseFlagDefinition({ ...valid, allocation: { percent: 10, seed: 2 } })).toThrow(
+      /allocation seed/u,
+    );
+  });
+
+  it('rejects a malformed salt instead of silently dropping it', () => {
+    // A dropped salt would reshuffle every split of the flag.
+    expect(() => parseFlagDefinition({ ...valid, salt: 7 })).toThrow(/salt/u);
+    expect(() => parseFlagDefinition({ ...valid, salt: '' })).toThrow(/salt/u);
+  });
+
+  it('keeps serving a flag whose version is malformed, and says so', () => {
+    // version is an analytics label — nothing evaluates it — so rejecting the
+    // flag over it would trade a cosmetic mismatch for FLAG_NOT_FOUND.
+    const warnings: FlagParseIssue[] = [];
+    const parsed = parseFlagDefinition({ ...valid, version: '3' }, warnings);
+
+    expect(parsed.key).toBe(valid.key);
+    expect(parsed.version).toBeUndefined();
+    expect(warnings).toEqual([{ at: valid.key, message: expect.stringMatching(/version/u) }]);
+  });
+
+  it('takes a valid version, and reads null as absent', () => {
+    expect(parseFlagDefinition({ ...valid, version: 4 }).version).toBe(4);
+    expect(parseFlagDefinition({ ...valid, version: null }).version).toBeUndefined();
+  });
+
+  it('drops an empty rollout array rather than producing an unservable split', () => {
+    expect(parseFlagDefinition({ ...valid, rollout: [] }).rollout).toBeUndefined();
+  });
+
+  it('rejects a targeting key claimed by two targets', () => {
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        targets: [
+          { variant: 'on', keys: ['u1'] },
+          { variant: 'off', keys: ['u1'] },
+        ],
+      }),
+    ).toThrow(/more than one target/u);
+  });
+
+  it('rejects an out-of-range allocation and a self-prerequisite', () => {
+    expect(() => parseFlagDefinition({ ...valid, allocation: { percent: 101 } })).toThrow(
+      /between 0 and 100/u,
+    );
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        prerequisites: [{ flag: 'new-checkout', variants: ['on'] }],
+      }),
+    ).toThrow(/own prerequisite/u);
+  });
+
+  it('rejects non-scalar metadata values', () => {
+    expect(() => parseFlagDefinition({ ...valid, metadata: { nested: {} } })).toThrow(
+      /metadata nested/u,
+    );
+  });
+
+  it('rejects a non-finite metadata number, like every other numeric field', () => {
+    // Metadata travels out on every result and every impression, and
+    // JSON.stringify writes a NaN or an Infinity as `null` on the OFREP wire —
+    // an unserveable annotation found at the protocol layer instead of here.
+    for (const rollout of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parseFlagDefinition({ ...valid, metadata: { rollout } })).toThrow(
+        /metadata rollout must be a boolean, string, or finite number/u,
+      );
+    }
+
+    expect(parseFlagDefinition({ ...valid, metadata: { rollout: 42 } }).metadata).toEqual({
+      rollout: 42,
+    });
+  });
+});
+
+describe('parseFlagDefinition — identity and cohort knobs', () => {
+  it('rejects two rules sharing an id', () => {
+    // The id is the rule's bucketing domain: two rules holding the same one
+    // draw the same subjects into both ramps instead of independent ones.
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rules: [
+          { id: 'ramp', conditions: [], rollout: [{ variant: 'on', weight: 10 }] },
+          { id: 'ramp', conditions: [], rollout: [{ variant: 'off', weight: 10 }] },
+        ],
+      }),
+    ).toThrow(/appears more than once/u);
+  });
+
+  it('rejects a prerequisite named twice', () => {
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        prerequisites: [
+          { flag: 'new-backend', variants: ['on'] },
+          { flag: 'new-backend', variants: ['off'] },
+        ],
+      }),
+    ).toThrow(/appears more than once/u);
+  });
+
+  it('parses an allocation bucketed on an attribute', () => {
+    const parsed = parseFlagDefinition({
+      ...valid,
+      allocation: { percent: 20, bucketBy: 'accountId' },
+    });
+
+    expect(parsed.allocation).toEqual({ percent: 20, bucketBy: 'accountId' });
+    expect(() =>
+      parseFlagDefinition({ ...valid, allocation: { percent: 20, bucketBy: '' } }),
+    ).toThrow(/allocation bucketBy/u);
+  });
+
+  it('rejects an empty seed everywhere one can be written', () => {
+    // An empty seed is a config slip, and it would still feed the hash domain.
+    expect(() => parseFlagDefinition({ ...valid, allocation: { percent: 10, seed: '' } })).toThrow(
+      /allocation seed/u,
+    );
+    expect(() =>
+      parseFlagDefinition({
+        ...valid,
+        rollout: { seed: '', buckets: [{ variant: 'on', weight: 100 }] },
+      }),
+    ).toThrow(/rollout seed/u);
+  });
+});

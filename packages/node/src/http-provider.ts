@@ -1,6 +1,6 @@
 import {
   createSnapshot,
-  parseFlagDefinitions,
+  parseRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
@@ -52,18 +52,32 @@ export class HttpFlagProvider implements FlagProvider {
       signal: AbortSignal.timeout(this.#timeoutMs),
     });
 
-    if (response.status === 304) return null;
+    if (response.status === 304) {
+      // A 304 carries no ruleset, so it is only usable as "keep serving what
+      // you already have" — and on the first load there is nothing to keep.
+      // The test is therefore whether a snapshot exists at all, not whether
+      // this request carried a validator. Keying it off the validator turned
+      // every 304 into a failure for a healthy client whose control plane had
+      // simply stopped stamping ETags: it holds a perfectly good snapshot,
+      // sends no `If-None-Match`, and a caching proxy answers 304 anyway — so
+      // it reported an error through `onError` on every poll, forever, while
+      // serving exactly the right flags.
+      if (previous === undefined) {
+        throw new Error(`Flag endpoint ${this.#url} responded 304 to an unconditional request`);
+      }
+      return null;
+    }
 
     if (!response.ok) {
       throw new Error(`Flag endpoint ${this.#url} responded ${response.status}`);
     }
 
     const raw: unknown = await response.json();
-    const { flags, issues } = parseFlagDefinitions(raw);
+    const { flags, segments, issues } = parseRuleset(raw);
     if (issues.length > 0) this.#onParseIssues?.(issues);
 
     const etag = response.headers.get('etag');
 
-    return createSnapshot(flags, etag === null ? {} : { version: etag });
+    return createSnapshot(flags, etag === null ? {} : { version: etag }, segments);
   }
 }

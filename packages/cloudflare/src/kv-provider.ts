@@ -1,6 +1,6 @@
 import {
   createSnapshot,
-  parseFlagDefinitions,
+  parseRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
@@ -65,10 +65,10 @@ export class KvFlagProvider implements FlagProvider {
     const revision = metadata?.revision;
     if (revision !== undefined && previous?.version === revision) return null;
 
-    const { flags, issues } = parseFlagDefinitions(value);
+    const { flags, segments, issues } = parseRuleset(value);
     if (issues.length > 0) this.#onParseIssues?.(issues);
 
-    return createSnapshot(flags, revision === undefined ? {} : { version: revision });
+    return createSnapshot(flags, revision === undefined ? {} : { version: revision }, segments);
   }
 }
 

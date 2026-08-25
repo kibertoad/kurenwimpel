@@ -59,6 +59,22 @@ describe('FileFlagProvider', () => {
     expect(second?.flags.get('new-checkout')?.enabled).toBe(false);
   });
 
+  it('loads segments from the document form of the ruleset', async () => {
+    await writeFile(
+      path,
+      JSON.stringify({
+        flags: ruleset,
+        segments: [{ key: 'beta-testers', included: ['user-in'] }],
+      }),
+      'utf8',
+    );
+
+    const snapshot = await new FileFlagProvider({ path }).load();
+
+    expect(snapshot?.flags.size).toBe(1);
+    expect(snapshot?.segments.get('beta-testers')?.included.has('user-in')).toBe(true);
+  });
+
   it('reports invalid JSON with the offending path', async () => {
     await writeFile(path, '{ not json', 'utf8');
     await expect(new FileFlagProvider({ path }).load()).rejects.toThrow(/not valid JSON/u);
@@ -117,13 +133,38 @@ describe('HttpFlagProvider', () => {
     expect(headers['if-none-match']).toBe('W/"rev-3"');
   });
 
-  it('treats 304 as unchanged', async () => {
+  it('treats 304 as unchanged when it answers a conditional request', async () => {
     const provider = new HttpFlagProvider({
       url: 'https://flags.test/current',
       fetch: () => Promise.resolve(new Response(null, { status: 304 })),
     });
 
-    expect(await provider.load({ flags: new Map(), version: 'rev-1', fetchedAt: 0 })).toBeNull();
+    expect(await provider.load(createSnapshot([], { version: 'rev-1' }))).toBeNull();
+  });
+
+  it('rejects a 304 answering the very first request', async () => {
+    // Nothing was asked, so "unchanged" answers nothing — and with no snapshot
+    // behind it, reporting it as unchanged leaves the client with no ruleset.
+    const provider = new HttpFlagProvider({
+      url: 'https://flags.test/current',
+      fetch: () => Promise.resolve(new Response(null, { status: 304 })),
+    });
+
+    await expect(provider.load()).rejects.toThrow(/unconditional request/u);
+  });
+
+  it('treats a 304 as unchanged whenever there is a snapshot to keep serving', async () => {
+    // A control plane that stops stamping ETags leaves the snapshot versionless,
+    // so no If-None-Match goes out — and a caching proxy can still answer 304.
+    // Keying the rejection off the validator rather than off "is there a
+    // snapshot at all" turned that into an onError on every single poll,
+    // forever, for a client that was serving exactly the right flags.
+    const provider = new HttpFlagProvider({
+      url: 'https://flags.test/current',
+      fetch: () => Promise.resolve(new Response(null, { status: 304 })),
+    });
+
+    expect(await provider.load(createSnapshot([]))).toBeNull();
   });
 
   it('throws on a non-ok response', async () => {
@@ -197,6 +238,30 @@ describe('PollingFlagClient', () => {
 
     expect(load).toHaveBeenCalledOnce();
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('forwards onImpression to the underlying client', async () => {
+    // The README's exposure-feed example constructs the polling client with
+    // onImpression; the option must actually reach evaluation.
+    const onImpression = vi.fn();
+    const client = new PollingFlagClient({
+      provider: {
+        name: 'test',
+        load: () => Promise.resolve(createSnapshot(ruleset, { fetchedAt: 0 })),
+      } satisfies FlagProvider,
+      onImpression,
+    });
+
+    await client.start();
+    client.getBoolean('new-checkout', false, { targetingKey: 'user-1' });
+
+    expect(onImpression).toHaveBeenCalledOnce();
+    expect(onImpression.mock.calls[0]?.[0]).toMatchObject({
+      flagKey: 'new-checkout',
+      targetingKey: 'user-1',
+    });
+
+    await client.close();
   });
 
   it('rejects from start when the first load fails', async () => {

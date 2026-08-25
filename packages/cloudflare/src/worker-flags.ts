@@ -1,4 +1,9 @@
-import { FeatureFlagClient, type EvaluationContext, type FlagProvider } from '@kurenwimpel/core';
+import {
+  FeatureFlagClient,
+  type EvaluationContext,
+  type FlagProvider,
+  type ImpressionEvent,
+} from '@kurenwimpel/core';
 
 export interface WorkerFlagsOptions {
   readonly provider: FlagProvider;
@@ -9,6 +14,8 @@ export interface WorkerFlagsOptions {
   readonly refreshIntervalMs?: number;
   readonly defaultContext?: EvaluationContext;
   readonly onError?: (error: Error) => void;
+  /** The exposure feed for experiment analysis; one event per evaluation. */
+  readonly onImpression?: (event: ImpressionEvent) => void;
 }
 
 export const DEFAULT_REFRESH_INTERVAL_MS = 60_000;
@@ -37,6 +44,7 @@ export class WorkerFlags {
       provider: options.provider,
       ...(options.defaultContext === undefined ? {} : { defaultContext: options.defaultContext }),
       ...(options.onError === undefined ? {} : { onError: options.onError }),
+      ...(options.onImpression === undefined ? {} : { onImpression: options.onImpression }),
     });
   }
 

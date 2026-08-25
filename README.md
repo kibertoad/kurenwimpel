@@ -19,6 +19,12 @@ Both wrappers re-export the core, so a service only ever imports one package.
 `@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
 an implementation, and depends on none of them.
 
+The core's source is grouped by role — `model/` (domain types), `evaluation/`
+(pure decision functions), `parsing/` (validation for untrusted JSON), and
+`runtime/` (snapshots, providers, the client). The design decisions behind the
+engine — and the alternatives from LaunchDarkly, Split, and Flagsmith that were
+considered and rejected — are recorded in [`docs/adr`](docs/adr/README.md).
+
 ## Toolchain
 
 pnpm 11 workspaces, Turborepo, oxlint (type-aware, via `oxlint-tsgolint`), oxfmt,
@@ -63,24 +69,78 @@ pnpm --filter @kurenwimpel/cloudflare run cf-typegen
 
 ## Concepts
 
-A **flag** has named **variants** mapping to values. Which variant a caller gets is
-decided, in order:
+A **flag** has named **variants** mapping to values. A variant value is a
+boolean, string, finite number, or JSON object — the exact set OFREP can carry
+on the wire; a `rate-limit` flag can serve `{ "perMinute": 600 }`. Which variant
+a caller gets is decided, in order:
 
-1. `enabled: false` → `offVariant`. The kill switch; rules are not consulted.
-2. The first **rule** whose conditions all match → its `variant`, or its `rollout`.
-3. The flag's own `rollout`, if it has one.
-4. `defaultVariant`.
+1. `enabled: false` → `offVariant`. The kill switch; nothing else is consulted.
+2. A failed **prerequisite** → `offVariant`. Each entry names another flag and
+   the variants that satisfy it; the dependency must be enabled and serving one
+   of them, for this same context. A closed gate upstream closes everything
+   under it.
+3. An **individual target** listing the context's `targetingKey` → its variant.
+   QA accounts and demo tenants get pinned here, above every percentage.
+4. Outside the **traffic allocation** → `defaultVariant`, reason
+   `NOT_ALLOCATED`. `allocation: { percent: 20 }` admits 20% of traffic into
+   the rules and rollouts; everyone else never reaches them.
+5. The first **rule** whose conditions all match → its `rollout`, else its
+   `variant`. That first match decides; nothing below it is consulted, so a rule
+   whose rollout is parked at zero serves `defaultVariant` rather than handing
+   the subject to the next rule — or falling back to a fixed `variant` the same
+   rule happens to declare.
+6. The flag's own `rollout`, if no rule matched.
+7. `defaultVariant`, reason `STATIC`.
 
-A **rollout** is a weighted split bucketed on the context's `targetingKey`. Weights
-are relative, so `[{on, 1}, {off, 3}]` is 25/75.
+The **context** is flat, the same shape OpenFeature and OFREP use on the wire:
 
-Bucketing is MurmurHash3 over `"<salt>:<targetingKey>"`, salted per flag. Two
-consequences worth relying on:
+```ts
+{ targetingKey: user.id, plan: 'pro', appVersion: '2.4.1', roles: ['admin'] }
+```
+
+A **rollout** is a weighted split bucketed on the `targetingKey`. Weights are
+relative, so `[{on, 1}, {off, 3}]` is 25/75. The object form adds two knobs:
+
+```json
+"rollout": {
+  "bucketBy": "accountId",
+  "seed": "iteration-2",
+  "buckets": [{ "variant": "on", "weight": 50 }, { "variant": "off", "weight": 50 }]
+}
+```
+
+`bucketBy` hashes an attribute instead of the targeting key, so a whole
+account flips together. `seed` re-randomises this one split — a fresh draw for
+an experiment's next iteration — without touching anything else.
+
+The allocation gate is a separate draw and hashes the targeting key by default,
+which admits an account's users independently even where assignment clusters
+them. An experiment that has to take or leave whole accounts gives the gate the
+same attribute: `allocation: { percent: 20, bucketBy: "accountId" }`.
+
+A **segment** is a named, reusable audience: explicit `included` / `excluded`
+key lists (compiled to hash sets, so a hundred-thousand-key list costs one
+probe) plus condition rules. Flags reference segments with the `inSegment` /
+`notInSegment` operators. Exclusion always wins — an excluded key is out no
+matter what the rules say — and membership never nests, so it can never cycle.
+
+Bucketing is MurmurHash3 over an injectively encoded domain tuple plus the
+targeting key, with domains derived from a per-flag salt. Four consequences
+worth relying on:
 
 - The same subject always lands in the same bucket, on every runtime and in every
   process — no coordination needed between a Worker at the edge and a Node service.
-- Widening a rollout only ever adds subjects to the treatment group. Ramping 20% →
-  50% never takes someone back out.
+- Widening an allocation only ever adds subjects. Ramping `percent` 20 → 50
+  never takes someone back out, and never reassigns anyone already inside.
+- A rollout is monotone the same way **as long as its weights still add up to
+  the same total**, because a split is normalised by that sum: `[on 20, off 80]`
+  → `[on 50, off 50]` only moves subjects into `on`, but bumping `on` to 50 and
+  leaving `off` at 80 re-scales every boundary and reshuffles the population.
+  Ramping exposure is the allocation gate's job, not the weights' — see
+  [ADR 0005](docs/adr/0005-traffic-allocation.md).
+- Allocation and assignment are independent draws: the 20% admitted to an
+  experiment still split 50/50, not "the users who would have gotten treatment
+  anyway".
 
 ### Example definition
 
@@ -91,30 +151,50 @@ consequences worth relying on:
   "variants": { "on": true, "off": false },
   "defaultVariant": "off",
   "offVariant": "off",
+  "metadata": { "experiment": "checkout-q3" },
+  "prerequisites": [{ "flag": "new-backend", "variants": ["on"] }],
+  "targets": [{ "variant": "on", "keys": ["qa-account-1"] }],
+  "allocation": { "percent": 20 },
   "rules": [
     {
       "id": "internal-staff",
-      "conditions": [{ "attribute": "email", "operator": "endsWith", "value": "@example.com" }],
+      "conditions": [{ "operator": "inSegment", "segments": ["employees"] }],
       "variant": "on"
     },
     {
-      "id": "paid-ramp",
-      "conditions": [{ "attribute": "plan", "operator": "in", "value": ["pro", "enterprise"] }],
+      "id": "recent-app",
+      "conditions": [{ "attribute": "appVersion", "operator": "semverGte", "value": "2.4.0" }],
       "rollout": [
-        { "variant": "on", "weight": 20 },
-        { "variant": "off", "weight": 80 }
+        { "variant": "on", "weight": 50 },
+        { "variant": "off", "weight": 50 }
       ]
     }
   ]
 }
 ```
 
-Variant values are any JSON, not just booleans — a `rate-limit` flag can serve
-`{ "perMinute": 600 }`.
+A ruleset payload is an array of flags, a key-to-definition object, or the
+document form `{ "flags": [...], "segments": [...] }` once segments are in play.
 
 Operators: `exists`, `notExists`, `eq`, `neq`, `in`, `notIn`, `contains`,
-`startsWith`, `endsWith`, `gt`, `gte`, `lt`, `lte`. Array-valued attributes are
-matched as sets, so `roles: ["admin", "billing"]` satisfies `in: ["admin"]`.
+`startsWith`, `endsWith`, `gt`, `gte`, `lt`, `lte`, `semverEq`, `semverGt`,
+`semverGte`, `semverLt`, `semverLte`, `inSegment`, `notInSegment`.
+
+Array-valued attributes are matched as sets by the equality and set operators,
+so `roles: ["admin", "billing"]` satisfies `eq: "admin"` and `in: ["admin"]` and
+fails `neq: "admin"` and `notIn: ["admin"]` — a rule written to exclude a cohort
+never targets it. Each element is read the way the operator reads a single value,
+so `roles: ["administrator"]` satisfies `contains: "admin"`, exactly as
+`roles: "administrator"` does. The ordering operators (`gt`, `lt`, the `semver*`
+family) and the anchored string ones (`startsWith`, `endsWith`) have no set
+reading and simply do not match a compound attribute.
+
+`targetingKey` is the one attribute conditions read through the same identity
+rule bucketing uses, so it compares as the string it is bucketed as: a context
+carrying `targetingKey: 42` satisfies both `eq: 42` and `eq: "42"`.
+
+Everything fails closed: a missing attribute, a wrong type, an unknown segment,
+or an operator from a newer control plane matches nothing.
 
 ## Usage
 
@@ -126,14 +206,15 @@ import { HttpFlagProvider, PollingFlagClient } from '@kurenwimpel/node';
 const flags = new PollingFlagClient({
   provider: new HttpFlagProvider({ url: process.env.FLAGS_URL! }),
   pollIntervalMs: 30_000,
-  defaultContext: { attributes: { service: 'billing' } },
+  defaultContext: { service: 'billing' },
   onError: (error, info) => logger.warn({ error, ...info }, 'flag refresh failed'),
+  onImpression: (event) => analytics.enqueue(event), // exposure feed for A/B analysis
 });
 
 await flags.start(); // throws if the first load fails
 
 // Synchronous from here on: no I/O, no throwing.
-if (flags.getBoolean('new-checkout', false, { targetingKey: user.id })) {
+if (flags.getBoolean('new-checkout', false, { targetingKey: user.id, plan: user.plan })) {
   // ...
 }
 ```
@@ -178,15 +259,35 @@ The design assumption is that a flag lookup must never be the reason a request
 fails.
 
 - The **first** load is strict: `init()` / `start()` reject, so a service that
-  cannot read its flags fails to start rather than serving every request on
-  fallbacks.
+  cannot read its flags at startup should fail to start rather than serving every
+  request on fallbacks. A provider answering "unchanged" to that first load —
+  a 304 from a caching proxy, say — counts as a failure: there is no snapshot
+  behind it to serve.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
-- A **malformed flag** is dropped and reported through `onParseIssues`; the rest of
-  the ruleset still loads.
-- **Evaluation** never throws. Unknown key, missing variant, wrong type, or absent
-  targeting key all return the caller's default plus an `errorCode` on the
-  `*Details` variant of the getter.
+- A **malformed flag or segment** is dropped and reported through
+  `onParseIssues`; the rest of the ruleset still loads. A key defined twice
+  keeps the first definition and reports the rest, rather than letting array
+  order decide which one goes live.
+- A **dangling reference** — a prerequisite naming a flag or variant that is not
+  in the payload, an `inSegment` naming a segment that is not — is reported but
+  kept. Each one already fails closed at evaluation, and dropping the flag would
+  answer `FLAG_NOT_FOUND` and send every SDK to its own hardcoded default
+  instead.
+- A **rule using an operator from a newer control plane** is dropped and
+  reported; the rest of the flag or segment still loads. Such a rule matches
+  nobody either way, so dropping it decides nothing differently — and it avoids
+  the same `FLAG_NOT_FOUND` outage.
+- **Per-flag evaluation** never throws. Unknown key, missing variant, wrong
+  type, absent targeting key, a prerequisite cycle, or a hand-built definition
+  the parser never saw all return the caller's default plus an `errorCode` on
+  the `*Details` variant of the getter.
+- `evaluateAll()` is the one call that throws, and only before the first load: a
+  bulk body has no per-flag slot to report `PROVIDER_NOT_READY` in, and
+  answering it with zero flags is indistinguishable from a healthy empty
+  ruleset. Check `ready` first if a 5xx is not what you want.
+- A throwing `onImpression` hook is reported through `onError` and never fails
+  the evaluation.
 
 ## Adding a platform
 
@@ -201,9 +302,9 @@ interface FlagProvider {
 }
 ```
 
-`parseFlagDefinitions(raw)` from the core does the validation, and `createSnapshot`
-builds the result. That is the whole contract — see `packages/node/src/file-provider.ts`
-for the smallest complete example.
+`parseRuleset(raw)` from the core does the validation — flags and segments in
+one payload — and `createSnapshot` builds the result. That is the whole contract
+— see `packages/node/src/file-provider.ts` for the smallest complete example.
 
 ## Speaking OpenFeature
 
@@ -217,10 +318,9 @@ OFREP is the HTTP layer between an OpenFeature provider and a flag management
 system. Serving it means every community-maintained OFREP provider — in any
 language — can read flags from this project without a bespoke SDK.
 
-Nothing implements it yet. The contract exists first, so that the server handler,
-the OFREP-backed `FlagProvider`, and any test double are all built against one
-shared definition rather than three separate readings of the same OpenAPI document. It also does the reading
-that an implementation would otherwise do late and painfully: `packages/ofrep/README.md`
-sets out where the two models disagree — reasons the protocol has no name for,
-flag values that have no wire representation, and a context shape that is flat
-where the core's is nested.
+Nothing implements it yet, but the core's model is OFREP-expressible by
+construction ([ADR 0003](docs/adr/0003-ofrep-shaped-model.md)): the context is
+the wire's flat shape, variant values exclude what the wire cannot carry, the
+reason vocabulary matches where the protocol has names, and `toOfrepReason` /
+`toOfrepErrorCode` in the core pin the mapping for the two reasons it does not.
+`packages/ofrep/README.md` documents the remaining wire-level sharp edges.

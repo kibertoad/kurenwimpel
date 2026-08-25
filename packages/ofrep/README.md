@@ -108,22 +108,29 @@ worth knowing before implementing:
 ## Serving kurenwimpel flags over OFREP
 
 Nothing here maps the two together — that is the implementation this contract is
-meant to guide — but the seams are known, and none of them is discovered
-comfortably halfway through.
+meant to guide — but the core's model is now shaped to cross this wire by
+construction (see [ADR 0003](../../docs/adr/0003-ofrep-shaped-model.md)). The
+seams that used to need discovering are closed or pinned:
 
 ### Reasons
 
-`EvaluationReason` from `@kurenwimpel/core` does not line up one-to-one.
+Every reason the protocol can name is spelled identically in
+`EvaluationReason`; the two it cannot name have a canonical mapping, shipped by
+the core as `toOfrepReason`:
 
-| kurenwimpel       | OFREP             | Note                                                      |
-| ----------------- | ----------------- | --------------------------------------------------------- |
-| `DISABLED`        | `DISABLED`        |                                                           |
-| `TARGETING_MATCH` | `TARGETING_MATCH` |                                                           |
-| `SPLIT`           | `SPLIT`           |                                                           |
-| `DEFAULT`         | `STATIC`          | OFREP has no `DEFAULT`; `UNKNOWN` is the other candidate. |
-| `ERROR`           | —                 | Not a wire reason. Becomes an `evaluationFailure` body.   |
+| kurenwimpel           | OFREP             | Note                                                    |
+| --------------------- | ----------------- | ------------------------------------------------------- |
+| `STATIC`              | `STATIC`          |                                                         |
+| `TARGETING_MATCH`     | `TARGETING_MATCH` |                                                         |
+| `SPLIT`               | `SPLIT`           |                                                         |
+| `DISABLED`            | `DISABLED`        |                                                         |
+| `NOT_ALLOCATED`       | `STATIC`          | Outside the traffic allocation; the default was served. |
+| `PREREQUISITE_FAILED` | `DISABLED`        | A kill switch upstream of the flag closed it.           |
+| `ERROR`               | —                 | Not a wire reason. Becomes an `evaluationFailure` body. |
 
 ### Error codes
+
+Mapped by the core's `toOfrepErrorCode`:
 
 | kurenwimpel             | OFREP                                |
 | ----------------------- | ------------------------------------ |
@@ -140,28 +147,23 @@ never reports a type mismatch.
 
 ### Values
 
-`FlagValue` in the core is `JsonValue`, which includes `null` and arrays. OFREP's
-`oneOf` covers boolean, string, integer, float, and object — **arrays and `null`
-have no representation on the wire.** A flag serving `[1, 2, 3]` cannot be
-expressed. An implementation has to choose: reject such flags when the ruleset is
-parsed, wrap the value in an object, or omit the flag from bulk responses with an
-`evaluationFailure`.
+`FlagValue` in the core is `boolean | string | number | JsonObject` — exactly
+the arms of the `evaluationSuccess` union. A top-level `null` or array, which
+has no wire representation here, is rejected by the core's parser with an error
+that says why, so an unserveable flag cannot exist by the time a server would
+have to serve it.
 
 ### Context
 
-The two shapes are not the same. OFREP is flat, with `targetingKey` alongside the
-attributes; the core nests them under `attributes`:
+One shape on both sides: the core's `EvaluationContext` is flat, with
+`targetingKey` alongside the attributes, and attribute values admit any JSON —
+the same latitude this contract gives the `context` object. A request body's
+context is a core context; no mapping, no dropped attributes.
 
 ```ts
-// OFREP wire
+// OFREP wire and @kurenwimpel/core alike
 { targetingKey: 'u1', plan: 'pro' }
-// @kurenwimpel/core
-{ targetingKey: 'u1', attributes: { plan: 'pro' } }
 ```
-
-The core also narrows attribute values to
-`string | number | boolean | string[] | number[]`, where OFREP allows any JSON.
-Anything else has to be dropped or rejected on the way in.
 
 ## What is not here
 
