@@ -288,9 +288,3 @@ export function optionalString(value: unknown, field: string): string | undefine
   if (value === undefined || value === null) return undefined;
   return requireString(value, field);
 }
-
-/** The {@link optionalString} rule, for a number field. */
-export function optionalFiniteNumber(value: unknown, field: string): number | undefined {
-  if (value === undefined || value === null) return undefined;
-  return requireFiniteNumber(value, field);
-}

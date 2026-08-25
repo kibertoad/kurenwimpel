@@ -185,6 +185,29 @@ describe('parseRuleset cross-references', () => {
     expect(parseRuleset({ flags: [fixed], segments: [validSegment] }).issues).toEqual([]);
   });
 
+  it('reports a dangling segment reference from notInSegment too', () => {
+    // The negated operator names an audience exactly as the positive one does;
+    // a misspelled key behind it is the same silent no-op worth an issue.
+    const flag = {
+      ...validFlag,
+      rules: [
+        {
+          id: 'beta',
+          conditions: [{ operator: 'notInSegment', segments: ['beta-tester'] }],
+          variant: 'on',
+        },
+      ],
+    };
+    const result = parseRuleset({ flags: [flag], segments: [validSegment] });
+
+    expect(result.issues).toEqual([
+      {
+        at: 'new-checkout',
+        message: 'flag new-checkout: rule beta references unknown segment beta-tester',
+      },
+    ]);
+  });
+
   it('stays quiet about segments when the payload declares no segment side', () => {
     // A bare flag array may well have its segments loaded from elsewhere.
     const flag = {
