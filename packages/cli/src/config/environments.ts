@@ -1,13 +1,15 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { UsageError } from '../command.js';
-import { resolveRuleset } from './load-config.js';
+import { resolveRuleset, resolveSchedule } from './load-config.js';
 import type { LoadedConfig } from './load-config.js';
 
 export interface EnvironmentSummary {
   readonly name: string;
   /** Relative to the working directory, with `/` separators. */
   readonly ruleset: string;
+  /** The same, for the schedule file, which need not exist. */
+  readonly schedule: string;
   readonly approvers: readonly string[];
 }
 
@@ -16,13 +18,14 @@ export function listEnvironments(loaded: LoadedConfig): EnvironmentSummary[] {
   return Object.entries(loaded.config.environments).map(([name, entry]) => ({
     name,
     ruleset: fromWorkingDirectory(resolveRuleset(loaded, name)),
+    schedule: fromWorkingDirectory(resolveSchedule(loaded, name)),
     approvers: entry.approvers ?? [],
   }));
 }
 
-/** The files whose content decides what an environment serves. */
+/** The files whose content decides what an environment serves, now or later. */
 function filesOf(environment: EnvironmentSummary): string[] {
-  return [environment.ruleset];
+  return [environment.ruleset, environment.schedule];
 }
 
 /**
@@ -41,19 +44,24 @@ export function changedEnvironments(
   );
 }
 
-/** One CODEOWNERS line per environment that names approvers, anchored at the repository root. */
+/**
+ * CODEOWNERS lines for the files of each environment that names approvers,
+ * anchored at the repository root. The schedule gets the same owners as the
+ * ruleset, since an entry in it changes the environment just as an edit does.
+ */
 export function codeownersLines(environments: readonly EnvironmentSummary[]): string[] {
   return environments
     .filter((environment) => environment.approvers.length > 0)
-    .map((environment) => {
-      const path = environment.ruleset;
-      if (path.startsWith('../') || isAbsolute(path)) {
-        throw new UsageError(
-          `${path} is outside the working directory; run from the repository root`,
-        );
-      }
-      return `/${path.replaceAll(' ', String.raw`\ `)} ${environment.approvers.join(' ')}`;
-    });
+    .flatMap((environment) =>
+      filesOf(environment).map((path) => codeownersLine(path, environment.approvers)),
+    );
+}
+
+function codeownersLine(path: string, approvers: readonly string[]): string {
+  if (path.startsWith('../') || isAbsolute(path)) {
+    throw new UsageError(`${path} is outside the working directory; run from the repository root`);
+  }
+  return `/${path.replaceAll(' ', String.raw`\ `)} ${approvers.join(' ')}`;
 }
 
 function fromWorkingDirectory(path: string): string {

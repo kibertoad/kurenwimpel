@@ -368,12 +368,14 @@ What this gives you:
   reshuffled rollouts and rebucketed subjects.
 - Rollback without a rebuild to any revision a `kv` or `file` target keeps, and
   `git revert` for the lasting fix.
+- Scheduled changes, such as ramping a rollout on a set date: an entry in
+  `flags/<env>.schedule.json`, reviewed like any other change and applied by a
+  workflow every 5 minutes. GitHub runs it minutes late at times, so it is not for
+  a launch that needs the exact second.
 - No service of its own to run: GitHub, the CLI and the publish target are all of it.
 
 What it does not give you:
 
-- Scheduled changes, such as turning a flag on at a set time. That is
-  [#13](https://github.com/kibertoad/kurenwimpel/issues/13).
 - A UI for people who do not edit JSON in pull requests. That is
   [#23](https://github.com/kibertoad/kurenwimpel/issues/23).
 - Promotion between environments. Each environment publishes as soon as its own

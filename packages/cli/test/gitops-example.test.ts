@@ -41,12 +41,13 @@ async function cli(...argv: string[]): Promise<CliOutcome> {
       stderr += text;
     },
     readFile: (path) => readFile(path, 'utf8'),
+    writeFile: (path, text) => writeFile(path, text, 'utf8'),
     env: {},
     fetch: () => Promise.reject(new Error('no network in tests')),
     now: () => new Date(Date.UTC(2026, 0, 1, 0, minutes++)),
   };
   const code = await run(argv, io);
-  return { code, stdout, stderr };
+  return { code, stdout, stderr, written: {} };
 }
 
 async function exampleRuleset(environment: string): Promise<TestRuleset> {
@@ -101,7 +102,7 @@ describe('the gitops example', () => {
     const { stdout } = await cli('envs', '-c', CONFIG, '-f', 'codeowners');
 
     const lines = stdout.trimEnd().split('\n');
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(4);
     for (const line of lines) expect(codeowners).toContain(line);
   });
 
@@ -151,6 +152,73 @@ describe('the gitops example', () => {
 
     expect(stdout).toContain('1 flag and 0 segments differ. 1 change reshuffles subjects.');
     expect(stdout).toContain('| **rollout-reshuffled** | `rules[recent-app].rollout` |');
+  });
+
+  it('fails a pull request whose schedule entry would break the ruleset', async () => {
+    const entry = {
+      id: 'bad',
+      at: '2026-11-03T09:00:00Z',
+      flag: 'new-checkout',
+      set: { variants: {} },
+    };
+    await writeFile('flags/staging.schedule.json', JSON.stringify([entry], null, 2));
+
+    const { code, stdout } = await cli(
+      'schedule',
+      'validate',
+      'staging',
+      '-c',
+      CONFIG,
+      '-f',
+      'github',
+    );
+
+    expect(code).toBe(ExitCode.Findings);
+    expect(stdout).toContain(
+      '::error file=flags/staging.schedule.json,line=3,title=kurenwimpel schedule%3A bad::',
+    );
+  });
+
+  it('applies a due schedule entry, then publishes the result', async () => {
+    const entries = [
+      {
+        id: 'ramp-50',
+        at: '2026-11-03T09:00:00Z',
+        flag: 'new-checkout',
+        set: { allocation: { percent: 50 } },
+      },
+      {
+        id: 'ramp-100',
+        at: '2026-11-10T09:00:00Z',
+        flag: 'new-checkout',
+        set: { allocation: null },
+      },
+    ];
+    await writeFile('flags/production.schedule.json', JSON.stringify(entries, null, 2));
+    expect((await cli('schedule', 'validate', 'production', '-c', CONFIG)).code).toBe(ExitCode.Ok);
+
+    const now = ['--now', '2026-11-03T09:04:00Z'];
+    const applied = await cli(
+      'schedule',
+      'apply',
+      'production',
+      '-c',
+      CONFIG,
+      ...now,
+      '-f',
+      'json',
+    );
+    expect(JSON.parse(applied.stdout)).toMatchObject({ status: 'applied', pending: 1 });
+    expect(JSON.parse(await readFile('flags/production.schedule.json', 'utf8'))).toEqual([
+      entries[1],
+    ]);
+
+    const changed = await cli('envs', '-c', CONFIG, '--changed', 'flags/production.json');
+    expect(changed.stdout).toMatch(/^production /u);
+    expect((await cli('publish', 'production', '-c', CONFIG)).code).toBe(ExitCode.Ok);
+    const ruleset = JSON.parse(await readFile('flags/production.json', 'utf8')) as TestRuleset;
+    expect(ruleset.flags[0]!.allocation).toEqual({ percent: 50 });
+    expect(await readFile('out/production.json', 'utf8')).toBe(revisionOf(ruleset).payload);
   });
 
   it('publishes each environment, then rolls one back', async () => {

@@ -8,7 +8,6 @@ import {
   onlyFields,
   optionalKeep,
   optionalOwners,
-  optionalString,
   pickStrings,
   requiredString,
 } from './fields.js';
@@ -40,12 +39,11 @@ export function parseConfig(raw: unknown, source: string): KurenwimpelConfig {
 }
 
 function parseEnvironment(fields: Fields, at: string): EnvironmentConfig {
-  onlyFields(fields, ['target', 'ruleset', 'approvers'], at);
-  const ruleset = optionalString(fields, 'ruleset', at);
+  onlyFields(fields, ['target', 'ruleset', 'schedule', 'approvers'], at);
   const approvers = optionalOwners(fields, 'approvers', at);
   return {
     target: parseTarget(fields['target'], `${at}.target`),
-    ...(ruleset === undefined ? {} : { ruleset }),
+    ...pickStrings(fields, ['ruleset', 'schedule'], at),
     ...(approvers === undefined ? {} : { approvers }),
   };
 }
@@ -76,6 +74,12 @@ export function resolveTarget(loaded: LoadedConfig, environment: string): Target
 export function resolveRuleset(loaded: LoadedConfig, environment: string): string {
   const { ruleset = `${environment}.json` } = environmentOf(loaded, environment);
   return relativeToConfig(loaded, ruleset);
+}
+
+/** The schedule file of `<env>`, resolved the same way. Defaults to `<env>.schedule.json`. */
+export function resolveSchedule(loaded: LoadedConfig, environment: string): string {
+  const { schedule = `${environment}.schedule.json` } = environmentOf(loaded, environment);
+  return relativeToConfig(loaded, schedule);
 }
 
 function relativeToConfig(loaded: LoadedConfig, path: string): string {

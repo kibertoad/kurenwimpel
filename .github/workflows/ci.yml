@@ -43,6 +43,10 @@ jobs:
         with:
           persist-credentials: false
 
+      # actionlint resolves `uses: ./.github/workflows/...` from the nearest
+      # directory holding a .git, so the example needs one of its own.
+      - run: mkdir examples/gitops/.git
+
       - uses: docker://rhysd/actionlint:1.7.7
         with:
-          args: -color examples/gitops/.github/workflows/flags.yml examples/gitops/.github/workflows/flags-rollback.yml
+          args: -color examples/gitops/.github/workflows/flags.yml examples/gitops/.github/workflows/flags-rollback.yml examples/gitops/.github/workflows/flags-schedule.yml

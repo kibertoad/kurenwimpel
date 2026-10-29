@@ -4,4 +4,6 @@
 # on the main branch.
 /flags/kurenwimpel.config.json @acme/platform
 /flags/production.json @acme/flags-production
+/flags/production.schedule.json @acme/flags-production
 /flags/staging.json @acme/flags-staging
+/flags/staging.schedule.json @acme/flags-staging

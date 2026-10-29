@@ -89,9 +89,15 @@ export interface CliOutcome {
   readonly code: ExitCode;
   readonly stdout: string;
   readonly stderr: string;
+  /** What the command wrote through `io.writeFile`, by path. */
+  readonly written: Readonly<Record<string, string>>;
 }
 
 export type IoOverrides = Partial<Pick<CliIo, 'env' | 'fetch' | 'now'>>;
+
+function missing(): Error {
+  return Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' });
+}
 
 /**
  * Runs the CLI in memory. `files` maps a path to its parsed content, or to raw
@@ -104,6 +110,7 @@ export async function runCli(
 ): Promise<CliOutcome> {
   let stdout = '';
   let stderr = '';
+  const written: Record<string, string> = {};
   const io: CliIo = {
     stdout: (text) => {
       stdout += text;
@@ -112,9 +119,13 @@ export async function runCli(
       stderr += text;
     },
     readFile: (path) => {
-      if (!Object.hasOwn(files, path)) return Promise.reject(new Error('ENOENT: no such file'));
+      if (!Object.hasOwn(files, path)) return Promise.reject(missing());
       const content = files[path];
       return Promise.resolve(typeof content === 'string' ? content : JSON.stringify(content));
+    },
+    writeFile: (path, text) => {
+      written[path] = text;
+      return Promise.resolve();
     },
     env: {},
     fetch: () => Promise.reject(new Error('no network in tests')),
@@ -122,7 +133,7 @@ export async function runCli(
     ...overrides,
   };
   const code = await run(argv, io);
-  return { code, stdout, stderr };
+  return { code, stdout, stderr, written };
 }
 
 export { ExitCode };
