@@ -4,17 +4,17 @@
  *
  * The map is exhaustive by test: a schema added, renamed or removed upstream
  * fails `spec-conformance.test.ts` until it is accounted for here. That is the
- * point of writing it out rather than deriving it from the schemas' names —
+ * point of writing it out rather than deriving it from the schemas' names:
  * a name-based lookup would silently stop covering a component the day upstream
  * renamed one.
  *
  * Three kinds of entry:
  *
- * - `schema` — compared shape-for-shape against the document.
- * - `via` — has no schema of its own here because it is a fragment of a
+ * - `schema`: compared shape-for-shape against the document.
+ * - `via`: has no schema of its own here because it is a fragment of a
  *   composite (the six flag types are `oneOf` arms of `evaluationSuccess`, and
  *   are checked where that composition is checked).
- * - `annotationOnly` — carries a description or an example and no shape at all.
+ * - `annotationOnly`: carries a description or an example and no shape at all.
  */
 
 import {
@@ -26,6 +26,8 @@ import {
   evaluationFailureSchema,
   evaluationRequestSchema,
   evaluationSuccessSchema,
+  evaluateFlagContract,
+  evaluateFlagsBulkContract,
   eventStreamEndpointSchema,
   eventStreamSchema,
   flagKeySchema,
@@ -80,3 +82,9 @@ export const schemaForComponent = (name: string): unknown => {
 
 /** `#/components/schemas/x` → `x`. */
 export const componentNameOf = (ref: string): string => ref.replace('#/components/schemas/', '');
+
+/** Which exported contract serves each operation of the document, keyed as `specOperations` keys them. */
+export const CONTRACT_BY_OPERATION: Record<string, any> = {
+  'post /ofrep/v1/evaluate/flags/{key}': evaluateFlagContract,
+  'post /ofrep/v1/evaluate/flags': evaluateFlagsBulkContract,
+};

@@ -3,7 +3,7 @@
  * would have to accept it on the wire.
  *
  * Examples are what a server implementer copies, so they are the part of the
- * document most likely to expose a shape the prose left out — and the part the
+ * document most likely to expose a shape the prose left out, and the part the
  * document's own schemas do not have to agree with (the bulk example returns a
  * `FLAG_NOT_FOUND` entry its `oneOf` cannot produce; see `contracts.ts`).
  * Checking them is how that disagreement was found in the first place.
@@ -13,17 +13,17 @@ import { describe, expect, it } from 'vitest';
 import * as z from 'zod/mini';
 
 import {
-  bulkEvaluationQuerySchema,
-  bulkEvaluationRequestHeadersSchema,
   evaluateFlagContract,
-  evaluateFlagPathParamsSchema,
   evaluateFlagsBulkContract,
-  ofrepResponseHeadersSchema,
   REFETCH_EVALUATION_EVENT_TYPE,
   sseEventDataSchema,
   sseEventSchema,
 } from '../src/index.js';
-import { componentNameOf, schemaForComponent } from './component-registry.js';
+import {
+  CONTRACT_BY_OPERATION,
+  componentNameOf,
+  schemaForComponent,
+} from './component-registry.js';
 import {
   BULK_EVALUATION_FAILURE,
   BULK_EVALUATION_REQUEST,
@@ -35,7 +35,7 @@ import {
   SINGLE_EVALUATION_REQUEST,
   SINGLE_EVALUATION_SUCCESS,
 } from './fixtures.js';
-import { componentSchemas, deref, openapiDocument, specOperations } from './openapi-document.js';
+import { componentSchemas, openapiDocument, specOperations } from './openapi-document.js';
 
 type Node = any;
 
@@ -84,26 +84,20 @@ const bodyExamples = (): Example[] =>
  * schema describes. The wrapping is the test: `flagConfigLastModified` travels
  * on a query string that cannot carry the number the document shows there.
  */
-const outsideBodyExamples = (): Example[] => {
-  const schemasByLocation: Record<string, Record<string, unknown>> = {
-    'post /ofrep/v1/evaluate/flags/{key}': {
-      path: evaluateFlagPathParamsSchema,
-      header: bulkEvaluationRequestHeadersSchema,
-    },
-    'post /ofrep/v1/evaluate/flags': {
-      query: bulkEvaluationQuerySchema,
-      header: bulkEvaluationRequestHeadersSchema,
-    },
-  };
-
-  return specOperations().flatMap(({ id, operation }) => {
-    const parameters = (operation.parameters ?? []).map((parameter: Node) => deref(parameter));
+const outsideBodyExamples = (): Example[] =>
+  specOperations().flatMap(({ id, operation, parameters }) => {
+    const contract = CONTRACT_BY_OPERATION[id];
+    const schemasByLocation: Record<string, unknown> = {
+      path: contract?.requestPathParamsSchema,
+      query: contract?.requestQuerySchema,
+      header: contract?.requestHeaderSchema,
+    };
     const headers = Object.entries<Node>(operation.responses).flatMap(([status, response]) =>
       Object.entries<Node>(response.headers ?? {}).map(([name, header]) => ({
         label: `${id} → ${status} ${name}`,
         name: name.toLowerCase(),
         node: header,
-        schema: ofrepResponseHeadersSchema,
+        schema: contract?.responseHeaderSchema,
       })),
     );
 
@@ -112,7 +106,7 @@ const outsideBodyExamples = (): Example[] => {
         label: `${id} ${parameter.in} ${parameter.name}`,
         name: parameter.in === 'header' ? parameter.name.toLowerCase() : parameter.name,
         node: parameter,
-        schema: schemasByLocation[id]?.[parameter.in],
+        schema: schemasByLocation[parameter.in],
       }))
       .concat(headers)
       .flatMap(({ label, name, node, schema }: Node) =>
@@ -123,7 +117,6 @@ const outsideBodyExamples = (): Example[] => {
         })),
       );
   });
-};
 
 const componentExamples = (): Example[] =>
   Object.keys(componentSchemas)

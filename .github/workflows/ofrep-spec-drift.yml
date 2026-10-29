@@ -3,7 +3,7 @@ name: OFREP spec drift
 # `@kurenwimpel/ofrep` is a transcription of an OpenAPI document that upstream
 # publishes on a branch, with no tags and no releases. CI already checks the
 # transcription against the copy vendored in `packages/ofrep/spec`; this job is
-# the other half — it checks that copy against upstream.
+# the other half: it checks that copy against upstream.
 on:
   schedule:
     # Mondays, 06:00 UTC.
@@ -32,3 +32,5 @@ jobs:
       # is worth more when there is less between it and the answer. The failure
       # message names the commands that update the vendored copies.
       - run: node packages/ofrep/scripts/sync-spec.mjs --check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

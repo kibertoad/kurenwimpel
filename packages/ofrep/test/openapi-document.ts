@@ -4,16 +4,16 @@
  *
  * Both sides are reduced to the same shape descriptor, so one comparison covers
  * both directions of drift: an upstream change to the document, and a local
- * change to a schema. The descriptor keeps what a wire format is made of —
- * which properties exist, which are required, what type each holds, which
- * values an enum admits — and drops what only a reader cares about:
+ * change to a schema. The descriptor keeps what a wire format is made of
+ * (which properties exist, which are required, what type each holds, which
+ * values an enum admits) and drops what only a reader cares about:
  * descriptions, examples, formats, patterns, bounds. `format: float` and
  * `minLength: 1` are refinements of a type, not a different type, so they are
  * where the contract is allowed to be stricter than the document without a test
  * failing.
  *
  * The two documents are read as data, never as a source of truth about the
- * schemas' *intent* — the deliberate deviations are declared in the tests that
+ * schemas' *intent*; the deliberate deviations are declared in the tests that
  * use this module.
  */
 
@@ -55,7 +55,7 @@ export const deref = (node: Node): Node => {
 };
 
 /**
- * Sorts anything comparable as text — enum members are JSON values, and the two
+ * Sorts anything comparable as text: enum members are JSON values, and the two
  * sides only have to agree on an order, not on a meaningful one.
  */
 const byText = (a: unknown, b: unknown): number => String(a).localeCompare(String(b));
@@ -65,7 +65,9 @@ const byText = (a: unknown, b: unknown): number => String(a).localeCompare(Strin
  * them, or `unknown` where the document declares none.
  */
 export const typeOf = (node: Node): string => {
-  if (node === undefined || typeof node === 'boolean') return 'unknown';
+  if (node === undefined || node === true) return 'unknown';
+  // `additionalProperties: false` admits nothing, which is what `strictObject` renders as.
+  if (node === false) return 'never';
 
   const schema = deref(node);
   if (schema.type !== undefined) {
@@ -102,7 +104,7 @@ const isForbiddenProperty = (node: Node): boolean => {
   return schema?.not !== undefined && Object.keys(deref(schema.not)).length === 0;
 };
 
-export type PropertyShape = { type: string; enum?: readonly unknown[] };
+export type PropertyShape = { type: string; enum?: readonly unknown[]; items?: SchemaShape };
 
 export type ObjectVariant = {
   required: readonly string[];
@@ -139,7 +141,7 @@ const mergeVariants = (base: RawVariant, arm: RawVariant): RawVariant => ({
  * Folds one node's own constraints into `into`, following `$ref` and `allOf`,
  * and collects each `oneOf`/`anyOf` it defers to as a group of alternatives.
  *
- * `not: { required: [x] }` — how the document says "exactly one of these two" —
+ * `not: { required: [x] }`, how the document says "exactly one of these two",
  * is read as forbidding `x`, which is the same statement `z.never()` makes on
  * the other side.
  */
@@ -176,14 +178,22 @@ const rawVariantsOf = (node: Node): RawVariant[] => {
   );
 };
 
+const describeProperty = (node: Node): PropertyShape => {
+  const shape: PropertyShape = { type: typeOf(node) };
+  const values = enumOf(node);
+  if (values !== undefined) shape.enum = values;
+  const items: Node = deref(node).items;
+  if (items !== undefined) shape.items = describeJsonSchema(items);
+
+  return shape;
+};
+
 const finalise = (raw: RawVariant): ObjectVariant => {
   const properties: Record<string, PropertyShape> = {};
 
   for (const [name, node] of raw.properties) {
     if (raw.forbidden.has(name) || isForbiddenProperty(node)) continue;
-    const values = enumOf(node);
-    properties[name] =
-      values === undefined ? { type: typeOf(node) } : { type: typeOf(node), enum: values };
+    properties[name] = describeProperty(node);
   }
 
   return {
@@ -222,7 +232,7 @@ const describeJsonSchema = (node: Node): SchemaShape => {
 export const describeSpecSchema = (node: Node): SchemaShape => describeJsonSchema(node);
 
 /**
- * The shape a union of document nodes describes — for the one place the contract
+ * The shape a union of document nodes describes, for the one place the contract
  * admits an arm the document's own `oneOf` leaves out.
  */
 export const describeSpecUnion = (nodes: readonly Node[]): SchemaShape =>
@@ -232,17 +242,42 @@ export const describeSpecUnion = (nodes: readonly Node[]): SchemaShape =>
 export const describeContractSchema = (schema: unknown): SchemaShape =>
   describeJsonSchema(z.toJSONSchema(schema as z.core.$ZodType, { io: 'input' }));
 
-export type SpecOperation = { id: string; path: string; method: string; operation: Node };
+export type SpecOperation = {
+  id: string;
+  path: string;
+  method: string;
+  operation: Node;
+  /** Path-item and operation parameters together, dereferenced. */
+  parameters: Node[];
+};
+
+/** The operation keys of an OpenAPI path item; its other keys are shared fields. */
+const HTTP_METHODS = new Set([
+  'get',
+  'put',
+  'post',
+  'delete',
+  'options',
+  'head',
+  'patch',
+  'trace',
+  'query',
+]);
 
 /** Every `path` × `method` the document defines, keyed `"post /ofrep/v1/..."`. */
 export const specOperations = (): SpecOperation[] =>
   Object.entries<Node>(openapiDocument.paths).flatMap(([route, item]) =>
-    Object.entries<Node>(item).map(([method, operation]) => ({
-      id: `${method} ${route}`,
-      path: route,
-      method,
-      operation,
-    })),
+    Object.entries<Node>(item)
+      .filter(([key]) => HTTP_METHODS.has(key))
+      .map(([method, operation]) => ({
+        id: `${method} ${route}`,
+        path: route,
+        method,
+        operation,
+        parameters: [...(item.parameters ?? []), ...(operation.parameters ?? [])].map(
+          (parameter: Node) => deref(parameter),
+        ),
+      })),
   );
 
 /** The property names an object schema of this package declares, in any variant. */

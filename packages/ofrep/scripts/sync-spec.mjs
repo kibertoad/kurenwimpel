@@ -11,7 +11,7 @@
  * releases and no npm package, so a branch is the only thing there is to track
  * and a checksum comparison is the only way to notice it moved.
  *
- * Nothing here validates the documents — that is `test/spec-*.test.ts`, which
+ * Nothing here validates the documents: that is `test/spec-*.test.ts`, which
  * reads the vendored copies offline. This script only moves bytes and records
  * where they came from.
  */
@@ -56,10 +56,15 @@ const parseArgs = (argv) => {
 };
 
 const request = async (url, accept, allowMissing = false) => {
-  // GitHub rejects unattributed API requests; raw.githubusercontent.com does not
-  // care but is sent the same header for consistency.
+  // GitHub rejects API requests without a user agent, and rate-limits anonymous
+  // ones per IP, which a shared CI runner can exhaust. `GITHUB_TOKEN` lifts that.
+  const token = process.env.GITHUB_TOKEN;
   const response = await fetch(url, {
-    headers: { accept, 'user-agent': `${REPOSITORY}-spec-sync` },
+    headers: {
+      accept,
+      'user-agent': 'kurenwimpel-ofrep-spec-sync',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
   });
 
   if (response.status === 404 && allowMissing) return;
@@ -84,7 +89,7 @@ const resolveCommit = async (ref) => {
 
 /**
  * With `allowMissing`, a file the ref does not have comes back as `undefined`
- * rather than throwing — upstream renaming or deleting a document is drift to
+ * rather than throwing: upstream renaming or deleting a document is drift to
  * report, not a crash.
  */
 const downloadAtCommit = async (sha, upstreamPath, allowMissing = false) => {
@@ -99,14 +104,14 @@ const downloadAtCommit = async (sha, upstreamPath, allowMissing = false) => {
 const readVendored = async (file) => {
   try {
     return await readFile(path.join(SPEC_DIR, file.path));
-  } catch {
-    // Not vendored yet, or removed by hand. Both are drift, and both read as
-    // `undefined` to the comparison below.
+  } catch (error) {
+    // Not vendored yet, or removed by hand: both are drift, and read as
+    // `undefined` to the comparison below. Anything else is a real failure.
+    if (error.code !== 'ENOENT') throw error;
   }
 };
 
-const vendorFile = async (sha, file) => {
-  const contents = await downloadAtCommit(sha, file.upstreamPath);
+const writeVendored = async (file, contents) => {
   await writeFile(path.join(SPEC_DIR, file.path), contents);
   console.log(`vendored ${file.upstreamPath} → spec/${file.path} (${contents.byteLength} bytes)`);
 
@@ -121,8 +126,16 @@ const vendorFile = async (sha, file) => {
 const sync = async (ref) => {
   const commit = await resolveCommit(ref);
 
+  // Every download finishes before anything is written, so a failed one leaves
+  // spec/ and provenance.json as they were rather than half refreshed.
+  const downloads = await Promise.all(
+    SPEC_FILES.map((file) => downloadAtCommit(commit.sha, file.upstreamPath)),
+  );
+
   await mkdir(SPEC_DIR, { recursive: true });
-  const files = await Promise.all(SPEC_FILES.map((file) => vendorFile(commit.sha, file)));
+  const files = await Promise.all(
+    SPEC_FILES.map((file, index) => writeVendored(file, downloads[index])),
+  );
 
   const provenance = {
     $comment: `Written by scripts/sync-spec.mjs. Refresh with \`${UPDATE_COMMAND}\`; see spec/README.md.`,
@@ -169,7 +182,7 @@ const check = async (ref) => {
   for (const { file, upstream, vendored } of drifted) {
     console.error(`  ${file.upstreamPath}`);
     console.error(`    vendored: ${vendored ?? '(missing)'}`);
-    console.error(`    upstream: ${upstream ?? '(missing — renamed or removed upstream)'}`);
+    console.error(`    upstream: ${upstream ?? '(missing: renamed or removed upstream)'}`);
   }
   console.error(`\nUpdate the vendored copies and reconcile the contract with:\n`);
   console.error(`  ${UPDATE_COMMAND}`);

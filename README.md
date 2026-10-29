@@ -351,8 +351,8 @@ two routes, every request and response body, and the change-notification stream,
 as Zod Mini schemas checked against the specification's own examples.
 
 The specification is vendored at a pinned commit in `packages/ofrep/spec` and the
-transcription is compared to it — schema by schema, route by route, example by
-example — on every test run, with a weekly CI job watching upstream for movement
+transcription is compared to it schema by schema, route by route and example by
+example on every test run, with a weekly CI job watching upstream for movement
 ([ADR 0009](docs/adr/0009-vendored-ofrep-spec.md)). Updating to a newer revision:
 
 ```sh

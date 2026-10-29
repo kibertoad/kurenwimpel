@@ -4,7 +4,7 @@
  * travels outside the body.
  *
  * Every expectation is read out of `spec/openapi.yaml` rather than written down
- * here — a hand-copied status list is another transcription to keep in step, and
+ * here. A hand-copied status list is another transcription to keep in step, and
  * `contracts.test.ts` already holds the hand-copied one. The two are
  * complementary on purpose: that file pins what the document said when this
  * package was written, this file pins that it still says it.
@@ -14,35 +14,26 @@ import { isNoBodyResponse, mapApiContractToPath } from '@toad-contracts/core';
 import { describe, expect, it } from 'vitest';
 
 import {
-  evaluateFlagContract,
-  evaluateFlagsBulkContract,
   ofrepAuthHeadersSchema,
   ofrepResponseHeadersSchema,
   OFREP_CONTRACTS,
 } from '../src/index.js';
-import { componentNameOf, schemaForComponent } from './component-registry.js';
 import {
-  declaredPropertyNames,
-  deref,
-  openapiDocument,
-  specOperations,
-} from './openapi-document.js';
+  CONTRACT_BY_OPERATION,
+  componentNameOf,
+  schemaForComponent,
+} from './component-registry.js';
+import { declaredPropertyNames, openapiDocument, specOperations } from './openapi-document.js';
 
 type Node = any;
-
-const CONTRACT_BY_OPERATION: Record<string, Node> = {
-  'post /ofrep/v1/evaluate/flags/{key}': evaluateFlagContract,
-  'post /ofrep/v1/evaluate/flags': evaluateFlagsBulkContract,
-};
 
 const operations = specOperations();
 
 const jsonBodyRef = (body: Node): string | undefined =>
   body?.content?.['application/json']?.schema?.$ref;
 
-const parametersIn = (operation: Node, location: string): string[] =>
-  (operation.parameters ?? [])
-    .map((parameter: Node) => deref(parameter))
+const parametersIn = (parameters: Node[], location: string): string[] =>
+  parameters
     .filter((parameter: Node) => parameter.in === location)
     .map((parameter: Node): string =>
       location === 'header' ? parameter.name.toLowerCase() : parameter.name,
@@ -70,7 +61,7 @@ describe('operations', () => {
   });
 });
 
-describe.each(operations)('$id', ({ id, path, method, operation }) => {
+describe.each(operations)('$id', ({ id, path, method, operation, parameters }) => {
   const contract = CONTRACT_BY_OPERATION[id];
 
   it('is served at that path, by that method, under that tag', () => {
@@ -98,7 +89,7 @@ describe.each(operations)('$id', ({ id, path, method, operation }) => {
       const ref = jsonBodyRef(response);
 
       // Identity, not shape: a 400 wired to the 404's schema would describe a
-      // perfectly valid body — just not this status's.
+      // perfectly valid body, just not this status's.
       expect(ref === undefined ? isNoBodyResponse(entry) : entry, `${id} → ${status}`).toBe(
         ref === undefined ? true : schemaForComponent(componentNameOf(ref)),
       );
@@ -106,12 +97,12 @@ describe.each(operations)('$id', ({ id, path, method, operation }) => {
   });
 
   it('declares every parameter the document declares', () => {
-    expect(namesOf(contract.requestPathParamsSchema)).toEqual(parametersIn(operation, 'path'));
-    expect(namesOf(contract.requestQuerySchema)).toEqual(parametersIn(operation, 'query'));
+    expect(namesOf(contract.requestPathParamsSchema)).toEqual(parametersIn(parameters, 'path'));
+    expect(namesOf(contract.requestQuerySchema)).toEqual(parametersIn(parameters, 'query'));
     // Headers only need covering, not matching: the two authentication headers
     // are declared under `securitySchemes` rather than as parameters.
     expect(namesOf(contract.requestHeaderSchema)).toEqual(
-      expect.arrayContaining(parametersIn(operation, 'header')),
+      expect.arrayContaining(parametersIn(parameters, 'header')),
     );
   });
 });

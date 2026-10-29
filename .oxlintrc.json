@@ -77,8 +77,8 @@
     {
       // Maintenance CLIs: plain ESM, outside the typed build, and printing is the
       // whole point of running them. The type-aware rules have nothing to work
-      // from in a file no tsconfig includes — every `fetch` result reads as
-      // `any` — so those are off here and the rest of the rule set still applies.
+      // from in a file no tsconfig includes (every `fetch` result reads as
+      // `any`), so those are off here and the rest of the rule set still applies.
       "files": ["**/scripts/**/*.mjs"],
       "rules": {
         "no-console": "off",
@@ -91,7 +91,7 @@
       }
     },
     {
-      // These walk the vendored OpenAPI document — someone else's JSON, with no
+      // These walk the vendored OpenAPI document: someone else's JSON, with no
       // types to hand and no value in inventing any: the whole point is to read
       // what the document says rather than what we expected it to say.
       "files": [

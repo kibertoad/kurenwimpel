@@ -3,7 +3,7 @@
  * component.
  *
  * `src/` is a hand transcription, and a transcription's failure mode is not a
- * typo — the tests around it would catch that — it is the document changing
+ * typo, which the tests around it would catch; it is the document changing
  * underneath it. `spec/` pins the document this package was written from, this
  * file checks the transcription against it, and `pnpm spec:check` reports when
  * upstream has moved on. See `spec/README.md`.
@@ -34,7 +34,30 @@ import {
   openapiDocument,
   provenance,
   readSpecFile,
+  specOperations,
+  typeOf,
 } from './openapi-document.js';
+
+type Node = any;
+
+const flagsItems = componentSchemas['bulkEvaluationSuccess'].properties.flags.items;
+
+/**
+ * The document nodes a component is compared against where the contract
+ * deliberately differs: the document's own node, with the deviation applied.
+ */
+const DEVIATIONS: Record<string, unknown> = {
+  bulkEvaluationSuccess: {
+    ...componentSchemas['bulkEvaluationSuccess'],
+    properties: {
+      ...componentSchemas['bulkEvaluationSuccess'].properties,
+      flags: {
+        ...componentSchemas['bulkEvaluationSuccess'].properties.flags,
+        items: { oneOf: [...flagsItems.oneOf, { $ref: '#/components/schemas/flagNotFound' }] },
+      },
+    },
+  },
+};
 
 describe('the vendored documents', () => {
   it('are the bytes `scripts/sync-spec.mjs` recorded', () => {
@@ -70,7 +93,7 @@ describe('the vendored documents', () => {
 
 describe('component schemas', () => {
   it('are all accounted for', () => {
-    // Fails on a component added, renamed or removed upstream — the drift that
+    // Fails on a component added, renamed or removed upstream: the drift that
     // a per-schema test cannot see, because it never runs for a schema nobody
     // thought to write a test for.
     expect(Object.keys(COMPONENT_REGISTRY).toSorted()).toEqual(
@@ -84,14 +107,12 @@ describe('component schemas', () => {
 
   it.each(modelled)('%s is transcribed with the shape the document declares', (name) => {
     expect(describeContractSchema(schemaForComponent(name))).toEqual(
-      describeSpecSchema(componentSchemas[name]),
+      describeSpecSchema(DEVIATIONS[name] ?? componentSchemas[name]),
     );
   });
 });
 
-describe('the one deviation the shapes cannot express', () => {
-  const flagsItems = componentSchemas['bulkEvaluationSuccess'].properties.flags.items;
-
+describe('the deviation in the bulk flags array', () => {
   it('leaves `flagNotFound` out of the document bulk flags array', () => {
     // Pinned so the deviation below stays a deviation from a known baseline: if
     // upstream fixes its own `oneOf` (open-feature/protocol lists FLAG_NOT_FOUND
@@ -111,6 +132,30 @@ describe('the one deviation the shapes cannot express', () => {
     expect(describeContractSchema(bulkEvaluationEntrySchema)).toEqual(
       describeSpecUnion(withNotFound),
     );
+  });
+});
+
+describe('the refinements the package README lists as deviations', () => {
+  const operations = specOperations();
+
+  it('start from a path `key` the document leaves unbounded', () => {
+    const keys = operations
+      .flatMap(({ parameters }) => parameters)
+      .filter((parameter: Node) => parameter.in === 'path' && parameter.name === 'key');
+
+    expect(keys.map((parameter: Node) => parameter.schema)).toEqual([{ type: 'string' }]);
+  });
+
+  it('start from a `Retry-After` the document types as a date-time', () => {
+    const schemas: Node[] = operations
+      .flatMap(({ operation }) => Object.values<Node>(operation.responses))
+      .flatMap((response: Node) => response.headers?.['Retry-After']?.schema ?? []);
+    const stringArms = schemas
+      .flatMap((schema: Node) => schema.oneOf ?? [schema])
+      .filter((arm: Node) => arm.type === 'string');
+
+    expect(schemas.map((schema) => typeOf(schema))).toEqual(['string', 'integer|string']);
+    expect(stringArms.map((arm: Node) => arm.format)).toEqual(['date-time', 'date-time']);
   });
 });
 

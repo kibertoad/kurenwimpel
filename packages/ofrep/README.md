@@ -13,7 +13,7 @@ implements neither. It also does not depend on `@kurenwimpel/core`, so it stays
 usable as a plain OFREP contract.
 
 The document itself is vendored at a pinned commit in [`spec/`](spec/README.md)
-and the transcription is checked against it on every test run — see
+and the transcription is checked against it on every test run. See
 [_Grounded on the document_](#grounded-on-the-document).
 
 [spec]: https://github.com/open-feature/protocol/blob/main/service/openapi.yaml
@@ -101,7 +101,7 @@ The checks are read out of the document rather than written down beside it: the
 component map is exhaustive by test, every example in the document is parsed by
 the schema that would receive it on the wire, and both sides of every shape
 comparison go through the same JSON Schema normaliser. A property added upstream,
-an enum value renamed, a seventh flag type, a new query parameter — each fails a
+an enum value renamed, a seventh flag type, a new query parameter: each fails a
 test that nobody had to think to write.
 
 Updating to a newer revision is `pnpm --filter @kurenwimpel/ofrep run spec:sync`
@@ -112,7 +112,7 @@ failure to where it is reconciled.
 
 ## Where this deviates from the document
 
-Three places, all deliberate — and each one pinned by a test against the vendored
+Three places, all deliberate, and each one pinned by a test against the vendored
 copy, so it stays a deviation from a known baseline rather than becoming drift.
 
 1. **`flagNotFound` is accepted inside a bulk `flags` array.** The specification
