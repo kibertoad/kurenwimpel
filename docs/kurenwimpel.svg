@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 300" width="560" height="300" role="img" aria-label="A Kurenwimpel: a checkered home plate on a mast, extended by a carved wooden village scene">
+  <rect width="560" height="300" rx="12" fill="#dbe9f4"/>
+  <path d="M0 262 Q70 252 140 262 T280 262 T420 262 T560 262 V288 Q560 300 548 300 H12 Q0 300 0 288 Z" fill="#9cbcd6"/>
+
+  <rect x="126" y="92" width="8" height="208" fill="#6b4a2b"/>
+  <circle cx="130" cy="88" r="7" fill="#c9a227"/>
+  <path d="M134 78 Q190 70 250 86 Q190 92 134 96 Z" fill="#b8312f"/>
+
+  <g stroke="#222" stroke-width="2">
+    <rect x="60" y="110" width="140" height="70" fill="#fff"/>
+    <rect x="60" y="110" width="35" height="35" fill="#111"/>
+    <rect x="130" y="110" width="35" height="35" fill="#111"/>
+    <rect x="95" y="145" width="35" height="35" fill="#111"/>
+    <rect x="165" y="145" width="35" height="35" fill="#111"/>
+  </g>
+
+  <g fill="#7a1f1f">
+    <rect x="200" y="160" width="330" height="20"/>
+    <rect x="215" y="135" width="40" height="25"/>
+    <path d="M208 136 L235 110 L262 136 Z"/>
+    <rect x="285" y="125" width="36" height="35"/>
+    <rect x="295" y="100" width="16" height="25"/>
+    <path d="M292 101 L303 66 L314 101 Z"/>
+    <rect x="301.5" y="52" width="3" height="16"/>
+    <rect x="297" y="57" width="12" height="3"/>
+    <path d="M342 160 L360 112 L378 160 Z"/>
+    <path d="M392 148 L474 148 L462 160 L404 160 Z"/>
+    <rect x="431" y="100" width="3" height="48"/>
+    <path d="M436 104 L468 144 L436 144 Z"/>
+    <rect x="486" y="138" width="34" height="22"/>
+    <path d="M481 139 L503 118 L525 139 Z"/>
+    <path d="M530 160 L552 170 L530 180 Z"/>
+  </g>
+  <g fill="#dbe9f4">
+    <rect x="224" y="142" width="8" height="8"/>
+    <rect x="238" y="142" width="8" height="8"/>
+    <path d="M298 160 V142 Q303 134 308 142 V160 Z"/>
+    <rect x="495" y="144" width="7" height="7"/>
+    <circle cx="232" cy="170" r="4"/>
+    <circle cx="282" cy="170" r="4"/>
+    <circle cx="332" cy="170" r="4"/>
+    <circle cx="382" cy="170" r="4"/>
+    <circle cx="432" cy="170" r="4"/>
+    <circle cx="482" cy="170" r="4"/>
+  </g>
+</svg>

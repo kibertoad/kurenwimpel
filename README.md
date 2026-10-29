@@ -6,6 +6,24 @@ Evaluation is a pure function over data. That core knows nothing about where its
 flags came from or what runtime it is on; each platform gets a thin wrapper that
 supplies a `FlagProvider` and nothing else.
 
+## The name
+
+<p align="center">
+  <img src="docs/kurenwimpel.svg" alt="A Kurenwimpel: a checkered home plate on a mast, extended by a carved wooden village scene" width="560">
+</p>
+
+A Kurenwimpel (Lithuanian _vėtrungė_) is the carved, painted wooden vane at the
+masthead of a _Kurenkahn_, the flat-bottomed sailing boat fishermen used on the
+Curonian Lagoon. In 1844 the Prussian authorities required every boat to fly a
+plate in the colours of its home village, so an inspector could tell from the
+shore whether a boat was fishing in waters it had a right to. Fishermen soon
+extended the plates with carved scenes of home: houses, churches, trees, boats,
+elks. The vanes are now the emblem of the Curonian Spit and are still made in
+Nida and Klaipėda.
+
+A flag that tells you at a glance which rules apply to whoever carries it seemed
+a fitting name for a feature flag library.
+
 ## Layout
 
 | Package                   | Directory             | What it is                                                       |
