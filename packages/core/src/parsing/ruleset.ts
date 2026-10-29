@@ -11,6 +11,7 @@ import { parseFlagDefinition } from './flag.js';
 import { isKeyedDefinition, isRecord } from './primitives.js';
 import type { FlagParseIssue } from './primitives.js';
 import { checkCrossReferences } from './references.js';
+import { checkSchemaVersion } from './schema-version.js';
 import { parseSegmentDefinition } from './segment.js';
 
 export interface ParseFlagsResult {
@@ -76,7 +77,8 @@ export function parseRuleset(raw: unknown): ParseRulesetResult {
     const segmentsPart =
       rawSegments === undefined ? emptySegments() : parseSegmentDefinitions(rawSegments);
 
-    return combine(flagsPart, segmentsPart, rawSegments !== undefined, checkDocumentKeys(raw));
+    const documentIssues = [...checkSchemaVersion(raw['schemaVersion']), ...checkDocumentKeys(raw)];
+    return combine(flagsPart, segmentsPart, rawSegments !== undefined, documentIssues);
   }
 
   return combine(parseFlagDefinitions(raw), emptySegments(), false, []);

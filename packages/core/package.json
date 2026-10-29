@@ -11,6 +11,7 @@
   "files": [
     "dist",
     "!dist/.tsbuildinfo",
+    "schema",
     "src"
   ],
   "type": "module",
@@ -19,7 +20,8 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./ruleset.schema.json": "./schema/ruleset.schema.json"
   },
   "publishConfig": {
     "access": "public"
@@ -35,6 +37,7 @@
   "devDependencies": {
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
+    "ajv": "^8.20.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },
