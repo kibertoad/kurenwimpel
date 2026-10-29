@@ -30,6 +30,7 @@ applies to the request, user or tenant in front of it.
 | Package                   | Directory             | What it is                                                       |
 | ------------------------- | --------------------- | ---------------------------------------------------------------- |
 | `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
+| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff and explain rulesets.  |
 | `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
 | `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
 | `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
