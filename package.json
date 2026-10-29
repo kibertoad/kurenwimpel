@@ -10,6 +10,7 @@
     "clean": "turbo run clean && rimraf node_modules/.cache .turbo",
     "test": "turbo run test",
     "test:mutation": "turbo run test:mutation --concurrency=1",
+    "bench": "turbo run bench --concurrency=1",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run build && oxlint --type-aware --max-warnings=0",
     "lint:fix": "turbo run build && oxlint --type-aware --fix",

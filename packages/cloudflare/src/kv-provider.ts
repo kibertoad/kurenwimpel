@@ -9,6 +9,8 @@ import {
   type RulesetSourceOptions,
 } from '@kurenwimpel/core';
 
+import { assertMaxBytes, DEFAULT_KV_MAX_BYTES, readCapped } from './read-capped.js';
+
 export interface KvProviderOptions {
   /** The KV namespace binding holding the ruleset. */
   readonly namespace: KVNamespace;
@@ -30,6 +32,12 @@ export interface KvProviderOptions {
    * `AbortSignal`, so a timed-out read is abandoned rather than cancelled.
    */
   readonly timeoutMs?: number;
+  /**
+   * Largest value accepted, in bytes. The value is read as a stream and the
+   * load fails as soon as it passes the limit, before anything is parsed.
+   * Defaults to 10 MiB, under the 25 MiB KV value limit.
+   */
+  readonly maxBytes?: number;
 }
 
 export const DEFAULT_FLAGS_KEY = 'flags:current';
@@ -54,6 +62,7 @@ export class KvFlagProvider implements FlagProvider {
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
   readonly #lastKnownGood: LastKnownGoodStore | undefined;
   readonly #timeoutMs: number;
+  readonly #maxBytes: number;
 
   constructor(options: KvProviderOptions) {
     this.#namespace = options.namespace;
@@ -62,6 +71,7 @@ export class KvFlagProvider implements FlagProvider {
     this.#onParseIssues = options.onParseIssues;
     this.#lastKnownGood = options.lastKnownGood;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_KV_TIMEOUT_MS;
+    this.#maxBytes = assertMaxBytes(options.maxBytes ?? DEFAULT_KV_MAX_BYTES);
   }
 
   load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
@@ -77,25 +87,44 @@ export class KvFlagProvider implements FlagProvider {
     previous: FlagSnapshot | undefined,
     source: RulesetSourceOptions,
   ): Promise<FlagSnapshot | null> {
-    const read = this.#namespace.getWithMetadata<unknown, KvFlagMetadata>(this.#key, {
-      type: 'json',
-      ...(this.#cacheTtl === undefined ? {} : { cacheTtl: this.#cacheTtl }),
-    });
-    const { value, metadata } = await withTimeout(
-      read,
+    const read = await withTimeout(
+      this.#readValue(previous),
       this.#timeoutMs,
       `KV read of "${this.#key}" did not finish within ${this.#timeoutMs}ms`,
     );
+    if (read === null) return null;
+
+    const { text, revision } = read;
+    const meta = revision === undefined ? {} : { version: revision };
+    return snapshotFromRuleset(JSON.parse(text), meta, source);
+  }
+
+  /** The raw value and its revision, or `null` when the revision is the one already loaded. */
+  async #readValue(previous: FlagSnapshot | undefined): Promise<KvValue | null> {
+    const { value, metadata } = await this.#namespace.getWithMetadata<KvFlagMetadata>(this.#key, {
+      type: 'stream',
+      ...(this.#cacheTtl === undefined ? {} : { cacheTtl: this.#cacheTtl }),
+    });
 
     if (value === null) {
       throw new Error(`No flag ruleset at KV key "${this.#key}"`);
     }
 
     const revision = metadata?.revision;
-    if (revision !== undefined && previous?.version === revision) return null;
+    if (revision !== undefined && previous?.version === revision) {
+      await value.cancel();
+      return null;
+    }
 
-    return snapshotFromRuleset(value, revision === undefined ? {} : { version: revision }, source);
+    const tooLarge = (): Error =>
+      new Error(`KV value "${this.#key}" is larger than maxBytes (${this.#maxBytes} bytes)`);
+    return { text: await readCapped(value, this.#maxBytes, tooLarge), revision };
   }
+}
+
+interface KvValue {
+  readonly text: string;
+  readonly revision: string | undefined;
 }
 
 export interface KvFlagMetadata {

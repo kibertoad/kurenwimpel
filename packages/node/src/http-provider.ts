@@ -9,6 +9,8 @@ import {
   type RulesetSourceOptions,
 } from '@kurenwimpel/core';
 
+import { assertMaxBytes, DEFAULT_HTTP_MAX_BYTES, readCapped } from './read-capped.js';
+
 export interface HttpProviderOptions {
   /** Endpoint returning the ruleset as JSON. */
   readonly url: string | URL;
@@ -20,6 +22,12 @@ export interface HttpProviderOptions {
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
   /** Where to keep the last ruleset that loaded, to boot from when the endpoint is down. */
   readonly lastKnownGood?: LastKnownGoodStore;
+  /**
+   * Largest response body accepted, in bytes. A bigger one fails the load
+   * before it is parsed: rejected up front when `Content-Length` says so, and
+   * otherwise as soon as the body read passes the limit. Defaults to 10 MiB.
+   */
+  readonly maxBytes?: number;
 }
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 5_000;
@@ -40,6 +48,7 @@ export class HttpFlagProvider implements FlagProvider {
   readonly #fetch: typeof globalThis.fetch;
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
   readonly #lastKnownGood: LastKnownGoodStore | undefined;
+  readonly #maxBytes: number;
 
   constructor(options: HttpProviderOptions) {
     this.#url = String(options.url);
@@ -48,6 +57,7 @@ export class HttpFlagProvider implements FlagProvider {
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#onParseIssues = options.onParseIssues;
     this.#lastKnownGood = options.lastKnownGood;
+    this.#maxBytes = assertMaxBytes(options.maxBytes ?? DEFAULT_HTTP_MAX_BYTES);
   }
 
   load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
@@ -91,9 +101,23 @@ export class HttpFlagProvider implements FlagProvider {
       throw new Error(`Flag endpoint ${this.#url} responded ${response.status}`);
     }
 
-    const raw: unknown = await response.json();
+    const raw: unknown = JSON.parse(await this.#readBody(response));
     const etag = response.headers.get('etag');
 
     return snapshotFromRuleset(raw, etag === null ? {} : { version: etag }, source);
+  }
+
+  async #readBody(response: Response): Promise<string> {
+    const tooLarge = (): Error =>
+      new Error(`Flag endpoint ${this.#url} sent more than maxBytes (${this.#maxBytes} bytes)`);
+
+    const declared = Number(response.headers.get('content-length') ?? Number.NaN);
+    if (declared > this.#maxBytes) {
+      await response.body?.cancel();
+      throw tooLarge();
+    }
+    // Checked again while reading: the header can be absent, wrong, or count
+    // the compressed bytes of a body that decompresses to far more.
+    return readCapped(response.body, this.#maxBytes, tooLarge);
   }
 }

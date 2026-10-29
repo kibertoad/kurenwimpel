@@ -31,6 +31,7 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench --run",
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {

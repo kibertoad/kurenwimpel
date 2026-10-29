@@ -13,6 +13,7 @@ export { FileFlagProvider } from './file-provider.js';
 export type { FileProviderOptions } from './file-provider.js';
 
 export { DEFAULT_HTTP_TIMEOUT_MS, HttpFlagProvider } from './http-provider.js';
+export { DEFAULT_HTTP_MAX_BYTES } from './read-capped.js';
 export type { HttpProviderOptions } from './http-provider.js';
 
 export { DEFAULT_POLL_INTERVAL_MS, PollingFlagClient } from './polling-client.js';

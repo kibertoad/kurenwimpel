@@ -64,7 +64,7 @@ describe('KvFlagProvider', () => {
     await new KvFlagProvider({ namespace: env.FLAGS, cacheTtlSeconds: 300 }).load();
 
     expect(getWithMetadata).toHaveBeenCalledWith(DEFAULT_FLAGS_KEY, {
-      type: 'json',
+      type: 'stream',
       cacheTtl: 300,
     });
   });
@@ -75,7 +75,7 @@ describe('KvFlagProvider', () => {
 
     await new KvFlagProvider({ namespace: env.FLAGS }).load();
 
-    expect(getWithMetadata).toHaveBeenCalledWith(DEFAULT_FLAGS_KEY, { type: 'json' });
+    expect(getWithMetadata).toHaveBeenCalledWith(DEFAULT_FLAGS_KEY, { type: 'stream' });
   });
 
   it('carries the KV revision metadata onto the snapshot', async () => {

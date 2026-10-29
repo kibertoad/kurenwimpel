@@ -9,5 +9,11 @@
   },
   // Workers runtime types come from `pnpm run cf-typegen`, which supersedes
   // @cloudflare/workers-types and stays in sync with wrangler.toml.
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "bench/**/*.ts",
+    "vitest.config.ts",
+    "worker-configuration.d.ts"
+  ]
 }
