@@ -104,7 +104,13 @@ const isForbiddenProperty = (node: Node): boolean => {
   return schema?.not !== undefined && Object.keys(deref(schema.not)).length === 0;
 };
 
-export type PropertyShape = { type: string; enum?: readonly unknown[]; items?: SchemaShape };
+export type PropertyShape = {
+  type: string;
+  enum?: readonly unknown[];
+  /** The fields of an object-typed property, so a nested object is compared field by field. */
+  fields?: SchemaShape;
+  items?: SchemaShape;
+};
 
 export type ObjectVariant = {
   required: readonly string[];
@@ -182,6 +188,7 @@ const describeProperty = (node: Node): PropertyShape => {
   const shape: PropertyShape = { type: typeOf(node) };
   const values = enumOf(node);
   if (values !== undefined) shape.enum = values;
+  if (shape.type.split('|').includes('object')) shape.fields = describeJsonSchema(node);
   const items: Node = deref(node).items;
   if (items !== undefined) shape.items = describeJsonSchema(items);
 
