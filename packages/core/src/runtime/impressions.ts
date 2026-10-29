@@ -12,7 +12,8 @@ import type { EvaluationErrorCode, EvaluationReason, EvaluationResult } from '..
 /**
  * One evaluation, described for analytics: the exposure record an A/B test
  * joins against its outcome metric. Emitted synchronously through
- * `onImpression`; batching, sampling, and shipping are the consumer's job.
+ * `onImpression`. `createImpressionBatcher` batches and deduplicates
+ * the feed; shipping it is the consumer's job.
  */
 export interface ImpressionEvent {
   readonly flagKey: string;
