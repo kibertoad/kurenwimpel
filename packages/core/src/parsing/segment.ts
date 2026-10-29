@@ -4,6 +4,7 @@
 
 import type { SegmentDefinition, SegmentRule } from '../model/segment.js';
 import { parseCondition } from './condition.js';
+import { parseHashedKeyList } from './hashed-keys.js';
 import { fail, isDroppedRule, isRecord, requireString, requireStringArray } from './primitives.js';
 import type { FlagParseIssue } from './primitives.js';
 
@@ -24,25 +25,38 @@ export function parseSegmentDefinition(
   const key = requireString(raw['key'], 'segment key');
   const included = parseKeyList(raw['included'], key, 'included');
   const excluded = parseKeyList(raw['excluded'], key, 'excluded');
+  const includedHashes = parseHashedKeyList(
+    raw['includedHashes'],
+    `segment ${key}: includedHashes`,
+  );
+  const excludedHashes = parseHashedKeyList(
+    raw['excludedHashes'],
+    `segment ${key}: excludedHashes`,
+  );
   const rawRules = raw['rules'];
   const rules = parseSegmentRules(rawRules, key, warnings);
 
   // Content, not presence. A segment whose criteria are all empty lists can
   // never match anybody, so every `inSegment` naming it matches nobody and
-  // every `notInSegment` matches everybody, forever and without complaint —
+  // every `notInSegment` matches everybody, forever and without complaint:
   // the same silence a misspelled segment key is checked for in
   // `references.ts`, reached through a different door. An operator who emptied
   // the list in the UI gets an issue rather than nothing.
   //
   // Dropped rules reach the same end, and the warnings explaining them are
   // discarded along with the segment, so the message has to carry the cause
-  // itself — "needs a non-empty rules list" sends an operator who wrote one
+  // itself. "Needs a non-empty rules list" sends an operator who wrote one
   // looking for a field that is already there.
-  const criteria = (included?.length ?? 0) + (excluded?.length ?? 0) + (rules?.length ?? 0);
+  const criteria =
+    (included?.length ?? 0) +
+    (excluded?.length ?? 0) +
+    (includedHashes?.values.length ?? 0) +
+    (excludedHashes?.values.length ?? 0) +
+    (rules?.length ?? 0);
   if (criteria === 0) {
     fail(
       declaredRules(rawRules) === 0
-        ? `segment ${key}: needs a non-empty included, excluded, or rules list`
+        ? `segment ${key}: needs a non-empty included, excluded, includedHashes, excludedHashes, or rules list`
         : `segment ${key}: every rule named an operator this version does not support`,
     );
   }
@@ -51,6 +65,8 @@ export function parseSegmentDefinition(
     key,
     ...(included === undefined ? {} : { included }),
     ...(excluded === undefined ? {} : { excluded }),
+    ...(includedHashes === undefined ? {} : { includedHashes }),
+    ...(excludedHashes === undefined ? {} : { excludedHashes }),
     ...(rules === undefined ? {} : { rules }),
   };
 }

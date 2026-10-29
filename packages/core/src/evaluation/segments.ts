@@ -8,6 +8,7 @@
  */
 
 import type { Segment, SegmentDefinition, SegmentRule } from '../model/segment.js';
+import { toDigestSet } from './hashed-keys.js';
 
 const EMPTY_KEYS: ReadonlySet<string> = new Set();
 
@@ -20,10 +21,14 @@ const EMPTY_KEYS: ReadonlySet<string> = new Set();
  * never meets a segment with a missing set or rule list.
  */
 export function compileSegment(definition: SegmentDefinition): Segment {
+  const includedHashes = toDigestSet(definition.includedHashes);
+  const excludedHashes = toDigestSet(definition.excludedHashes);
   return {
     key: definition.key,
     included: toKeySet(definition.included),
     excluded: toKeySet(definition.excluded),
+    ...(includedHashes === undefined ? {} : { includedHashes }),
+    ...(excludedHashes === undefined ? {} : { excludedHashes }),
     rules: toRuleList(definition.rules),
   };
 }
@@ -83,14 +88,23 @@ export function readySegment(segment: Segment | SegmentDefinition): Segment {
 /**
  * True when the value is already a compiled {@link Segment}.
  *
- * All three compiled fields are checked, not just `included`. Recognising a
+ * Every compiled field is checked, not just `included`. Recognising a
  * half-compiled object as finished would put it into the snapshot unvalidated,
- * and the first membership test would dereference the set it never grew.
+ * and the first membership test would dereference the set it never grew. The
+ * digest sets are optional, so they only have to be sets when present.
  */
 export function isCompiledSegment(value: Segment | SegmentDefinition): value is Segment {
   return (
-    value.included instanceof Set && value.excluded instanceof Set && Array.isArray(value.rules)
+    value.included instanceof Set &&
+    value.excluded instanceof Set &&
+    Array.isArray(value.rules) &&
+    isOptionalSet(value.includedHashes) &&
+    isOptionalSet(value.excludedHashes)
   );
+}
+
+function isOptionalSet(value: unknown): boolean {
+  return value === undefined || value instanceof Set;
 }
 
 /**

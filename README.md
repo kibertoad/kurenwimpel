@@ -202,8 +202,9 @@ same attribute: `allocation: { percent: 20, bucketBy: "accountId" }`.
 A **segment** is a named, reusable audience: explicit `included` / `excluded`
 key lists (compiled to hash sets, so a hundred-thousand-key list costs one
 probe) plus condition rules. Flags reference segments with the `inSegment` /
-`notInSegment` operators. Exclusion always wins — an excluded key is out no
-matter what the rules say — and membership never nests, so it can never cycle.
+`notInSegment` operators. Exclusion always wins: an excluded key is out no
+matter what the rules say. Membership never nests, so it can never cycle. Key
+lists can also hold SHA-256 digests of the keys instead (see [Security](#security)).
 
 Bucketing is MurmurHash3 over an injectively encoded domain tuple plus the
 targeting key, with domains derived from a per-flag salt. Four consequences
@@ -478,6 +479,75 @@ What that means in practice:
   are what cost. `evaluateAll` grows linearly with the number of flags.
 - The 10 MiB `maxBytes` default sits where a cold start costs about 90 ms and the
   snapshot keeps about 26 MiB. Raise it with both of those in mind.
+
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
+
+A ruleset travels further than it looks: every process and every Worker isolate
+that evaluates flags holds all of it, including every segment list and every
+individual target, and so do KV, the bucket or endpoint it is served from, and
+any last-known-good store.
+
+### Authenticate the HTTP provider
+
+`HttpFlagProvider` sends whatever `headers` you give it on every poll. Put a
+bearer token there, and keep the endpoint behind it:
+
+```ts
+new HttpFlagProvider({
+  url: 'https://flags.internal.example.com/ruleset.json',
+  headers: { authorization: `Bearer ${process.env.FLAGS_TOKEN}` },
+});
+```
+
+Never put a token in the URL. Query strings end up in access logs, proxy logs and
+error reports, and the provider quotes its URL in the errors it hands to `onError`.
+
+### Scope who can read the ruleset
+
+Anything that can read the source can read every flag, rule and list in it. Give
+read access to the services that evaluate flags and nobody else: a KV namespace
+bound only to the Workers that need it, a bucket policy or endpoint credential
+scoped to those services, and file permissions on a last-known-good store.
+
+### Keep personal data out of segments and targets
+
+Segment `included` / `excluded` lists and target `keys` are compared against the
+context's `targetingKey`, so they usually hold user or account identifiers.
+
+- Prefer opaque ids (a UUID, an internal account number) as targeting keys.
+- Never use an email address, a phone number or a name as a targeting key.
+- Where a list still identifies people, ship digests instead: `includedHashes` and
+  `excludedHashes` on a segment, `keyHashes` on a target. Each holds
+  `{ "algorithm": "sha256", "values": [...] }`, where a value is `sha256Hex(key)`
+  from `@kurenwimpel/core`. Only flags that use a hashed list pay for hashing,
+  about 1.5 µs per new targeting key; [ADR 0012](docs/adr/0012-hashed-key-lists.md)
+  has the numbers.
+
+```json
+{ "key": "beta-testers", "includedHashes": { "algorithm": "sha256", "values": ["9f86d08..."] } }
+```
+
+A digest hides a random identifier. It does not hide a guessable one: an
+unsalted SHA-256 of an email address or a sequential id is recovered by hashing
+candidates. Hashing is a second layer under opaque ids, not a replacement for them.
+
+### Serving flags over OFREP
+
+The OFREP server ([#17](https://github.com/kibertoad/kurenwimpel/issues/17))
+evaluates flags for remote callers, including browser SDKs. Its README has a full
+security section; the two rules that matter most:
+
+- `authorize` is mandatory. Nothing gets through without it, and it is where a
+  bearer token or API key is checked.
+- The bulk route serves every flag unless `bulkFilter` narrows it. A browser SDK's
+  key ships in page source, so use `bulkFilter` to keep server-only flags away
+  from client SDKs.
+
+Callers choose their own context, so a client can claim any `targetingKey`. Do
+not gate access control on a flag a caller can evaluate for an identity it does
+not hold.
 
 ## Adding a platform
 

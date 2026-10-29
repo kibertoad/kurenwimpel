@@ -18,6 +18,7 @@ export type {
   ConditionOperator,
   FlagDefinition,
   FlagMetadata,
+  HashedKeyList,
   Prerequisite,
   Rollout,
   RolloutBucket,
@@ -61,6 +62,7 @@ export { compileSegment } from './evaluation/segments.js';
 export { buildTargetIndex, compileTargets } from './evaluation/targets.js';
 export type { TargetIndex } from './evaluation/targets.js';
 export { compareVersions, parseVersion } from './evaluation/semver.js';
+export { sha256Hex } from './evaluation/sha256.js';
 export type { ParsedVersion } from './evaluation/semver.js';
 
 // parsing

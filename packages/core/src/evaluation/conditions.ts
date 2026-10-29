@@ -11,6 +11,7 @@ import type { AttributeValue, EvaluationContext } from '../model/context.js';
 import type { Condition, TargetingRule } from '../model/flag.js';
 import type { Segment, SegmentDefinition, SegmentRule } from '../model/segment.js';
 import { isRecord } from '../parsing/primitives.js';
+import { digestOf } from './hashed-keys.js';
 import { readySegment } from './segments.js';
 import { compareVersions } from './semver.js';
 
@@ -217,8 +218,8 @@ function matchesCompiledSegment(segment: Segment, context: EvaluationContext): b
   const key = readTargetingKey(context);
 
   if (key !== undefined) {
-    if (segment.excluded.has(key)) return false;
-    if (segment.included.has(key)) return true;
+    const listed = listedIn(segment, key);
+    if (listed !== undefined) return listed;
   }
 
   for (const rule of segment.rules) {
@@ -229,6 +230,23 @@ function matchesCompiledSegment(segment: Segment, context: EvaluationContext): b
   }
 
   return false;
+}
+
+/**
+ * What the segment's key lists say about this key: `false` when excluded,
+ * `true` when included, `undefined` when neither list names it. Exclusion wins
+ * across both forms, and the key is hashed only when a digest set exists.
+ */
+function listedIn(segment: Segment, key: string): boolean | undefined {
+  const { includedHashes, excludedHashes } = segment;
+  const digest =
+    includedHashes === undefined && excludedHashes === undefined ? undefined : digestOf(key);
+
+  if (segment.excluded.has(key)) return false;
+  if (digest !== undefined && excludedHashes?.has(digest) === true) return false;
+  if (segment.included.has(key)) return true;
+  if (digest !== undefined && includedHashes?.has(digest) === true) return true;
+  return undefined;
 }
 
 type SegmentCondition = Extract<Condition, { operator: 'inSegment' | 'notInSegment' }>;

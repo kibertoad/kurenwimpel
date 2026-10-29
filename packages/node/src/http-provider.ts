@@ -14,6 +14,10 @@ import { assertMaxBytes, DEFAULT_HTTP_MAX_BYTES, readCapped } from './read-cappe
 export interface HttpProviderOptions {
   /** Endpoint returning the ruleset as JSON. */
   readonly url: string | URL;
+  /**
+   * Sent on every request. Credentials belong here, as `authorization: Bearer ...`,
+   * never in `url`: the URL is quoted in load errors and lands in access logs.
+   */
   readonly headers?: Readonly<Record<string, string>>;
   /** Abort a hanging control plane rather than stalling a refresh forever. */
   readonly timeoutMs?: number;

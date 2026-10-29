@@ -39,7 +39,7 @@ import type {
   SharedPrerequisiteMemo,
 } from './prerequisite-walk.js';
 import { bucketingKeyFor, pickVariant } from './rollout.js';
-import { foldedTargets } from './targets.js';
+import { foldedTargets, hashedTargetOf } from './targets.js';
 import type { TargetIndex } from './targets.js';
 
 /**
@@ -411,7 +411,10 @@ function matchTarget(
   // what a target whose `keys` is not a list matches, are decided in
   // `compileTargets` and nowhere else, and the fold is paid once either way.
   const compiled = index?.get(flag.key) ?? foldedTargets(flag);
-  return compiled?.get(targetingKey);
+  const plain = compiled?.get(targetingKey);
+  if (plain !== undefined) return plain;
+
+  return hashedTargetOf(flag, targetingKey);
 }
 
 /**

@@ -20,7 +20,7 @@ describe('parseSegmentDefinition shape edges', () => {
     // it got there — and this way there were no rules to drop, so the message
     // must not claim there were.
     expect(() => parseSegmentDefinition({ key: 'beta' })).toThrow(
-      /needs a non-empty included, excluded, or rules list/u,
+      /needs a non-empty included, excluded, includedHashes, excludedHashes, or rules list/u,
     );
     expect(() => parseSegmentDefinition({ key: 'beta', included: [], rules: [] })).toThrow(
       /needs a non-empty/u,
