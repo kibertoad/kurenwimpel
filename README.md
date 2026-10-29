@@ -288,6 +288,29 @@ if (flags.getBoolean('new-checkout', false, { targetingKey: user.id, plan: user.
 `FileFlagProvider` is the alternative for flags shipped with the deployment or
 mounted from a ConfigMap.
 
+To pick up changes faster than the poll interval, point `changeStream` at the event
+stream of an [`@kurenwimpel/ofrep-server`](packages/ofrep-server/README.md#change-stream):
+
+```ts
+const flags = new PollingFlagClient({
+  provider: new HttpFlagProvider({ url: process.env.FLAGS_URL! }),
+  changeStream: {
+    url: process.env.FLAGS_STREAM_URL!,
+    headers: { authorization: `Bearer ${process.env.OFREP_TOKEN}` },
+  },
+});
+```
+
+Each `refetchEvaluation` event calls `refresh()`, so loading, ETags and parse
+reporting still go through the provider. While the stream is connected the poll
+interval stretches by `pollIntervalMultiplier` (10 by default); when it drops,
+polling returns to `pollIntervalMs` and the stream reconnects with exponential
+backoff and jitter, up to `maxReconnectDelayMs` (30 s). A connection that stays
+silent for `idleTimeoutMs` (120 s) is reopened. The URL is treated as a credential
+and never appears in an error passed to `onError`, which reports stream failures
+with `operation: 'stream'`. An open stream is a live socket, so it keeps the
+process running until `close()`.
+
 ### Cloudflare Workers
 
 ```ts
@@ -318,6 +341,16 @@ response path.
 
 Stamp `{ revision: string }` as the KV metadata when writing the ruleset — the
 provider uses it to skip re-parsing an unchanged payload.
+
+## Propagation latency
+
+How long a published change takes to reach a client, by mode:
+
+| Mode                                                | Latency                                                                                                                                                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Node, polling                                       | Up to `pollIntervalMs`: 30 s by default.                                                                                                                                                      |
+| Node, `changeStream` to `@kurenwimpel/ofrep-server` | The time the server's own client takes to load the change, then up to `versionCheckIntervalMs` (250 ms) plus one load on the Node side. The integration test holds that second leg under 1 s. |
+| Workers, `WorkerFlags` over KV                      | Up to the KV edge-cache TTL plus `refreshIntervalMs`: 60 s each by default. Workers have no change stream yet.                                                                                |
 
 ## Failure behaviour
 

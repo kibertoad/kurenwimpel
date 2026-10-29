@@ -1,11 +1,15 @@
+import type { FeatureFlagClient } from '@kurenwimpel/core';
+
 import type { OfrepAuthorization, OfrepHandler, OfrepHandlerOptions } from './options.js';
 import { emptyResponse, rejectionResponse, serverError } from './responses.js';
 import { buildRoutes } from './routes.js';
 import type { OfrepRoute } from './routes.js';
+import { createEventStream } from './stream-route.js';
 
 /**
- * Serves both OFREP evaluation routes from one Fetch API handler, so it runs
- * unchanged on Workers, Node (behind any Fetch adapter) and Bun.
+ * Serves both OFREP evaluation routes, and the change stream when configured,
+ * from one Fetch API handler, so it runs unchanged on Workers, Node (behind any
+ * Fetch adapter) and Bun.
  *
  * Paths it does not own answer 404 with no body, so it can sit behind a router
  * or be the whole server.
@@ -16,10 +20,13 @@ export function createOfrepHandler(options: OfrepHandlerOptions): OfrepHandler {
   }
 
   const { authorize, onError } = options;
-  const routes = buildRoutes(trimTrailingSlash(options.basePath ?? ''), {
-    client: () => Promise.resolve(options.client()),
-    bulkFilter: options.bulkFilter,
-  });
+  const basePath = trimTrailingSlash(options.basePath ?? '');
+  const client = (): Promise<FeatureFlagClient> => Promise.resolve(options.client());
+  const eventStream =
+    options.eventStream === undefined
+      ? undefined
+      : createEventStream(options.eventStream, { basePath, client, onError });
+  const routes = buildRoutes(basePath, { client, bulkFilter: options.bulkFilter, eventStream });
 
   return async (request) => {
     try {
