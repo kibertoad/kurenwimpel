@@ -1,6 +1,6 @@
 # 0011: A control plane service that publishes through the GitOps publisher
 
-Date: 2026-10-29 · Status: proposed
+Date: 2026-10-29 · Status: accepted
 
 ## Context
 
