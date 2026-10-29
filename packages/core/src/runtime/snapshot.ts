@@ -22,11 +22,17 @@ export interface FlagSnapshot {
   readonly version: string | undefined;
   /** Epoch millis the snapshot was produced. */
   readonly fetchedAt: number;
+  /** `fallback` when served from a last-known-good copy because the live source failed. */
+  readonly origin: SnapshotOrigin;
 }
+
+export type SnapshotOrigin = 'live' | 'fallback';
 
 export interface SnapshotMeta {
   readonly version?: string;
   readonly fetchedAt?: number;
+  /** Defaults to `live`. */
+  readonly origin?: SnapshotOrigin;
 }
 
 /**
@@ -62,6 +68,7 @@ export function createSnapshot(
     targetIndex: buildTargetIndex(flagsByKey.values()),
     version: meta.version,
     fetchedAt: meta.fetchedAt ?? Date.now(),
+    origin: meta.origin ?? 'live',
   };
 }
 
@@ -115,7 +122,8 @@ export function completeSnapshot(snapshot: FlagSnapshot): FlagSnapshot {
   const hasFlags = isFlagLookup(snapshot.flags);
   const hasSegments = isLookup(snapshot.segments);
   const hasTargetIndex = isLookup(snapshot.targetIndex);
-  if (hasFlags && hasSegments && hasTargetIndex) return snapshot;
+  const hasOrigin = snapshot.origin === 'live' || snapshot.origin === 'fallback';
+  if (hasFlags && hasSegments && hasTargetIndex && hasOrigin) return snapshot;
 
   const flags = hasFlags ? snapshot.flags : new Map<string, FlagDefinition>();
 
@@ -124,6 +132,7 @@ export function completeSnapshot(snapshot: FlagSnapshot): FlagSnapshot {
     flags,
     segments: hasSegments ? snapshot.segments : new Map<string, Segment>(),
     targetIndex: hasTargetIndex ? snapshot.targetIndex : buildTargetIndex(flags.values()),
+    origin: hasOrigin ? snapshot.origin : 'live',
   };
 }
 
@@ -158,4 +167,5 @@ export const EMPTY_SNAPSHOT: FlagSnapshot = {
   targetIndex: new Map(),
   version: undefined,
   fetchedAt: 0,
+  origin: 'live',
 };

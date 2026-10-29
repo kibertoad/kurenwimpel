@@ -1,9 +1,12 @@
 import {
-  createSnapshot,
-  parseRuleset,
+  loadWithFallback,
+  snapshotFromRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
+  type LastKnownGoodStore,
+  type ProviderLoadContext,
+  type RulesetSourceOptions,
 } from '@kurenwimpel/core';
 
 export interface KvProviderOptions {
@@ -20,6 +23,8 @@ export interface KvProviderOptions {
   readonly cacheTtlSeconds?: number;
   /** Called for definitions that failed validation; the rest still load. */
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
+  /** Where to keep the last ruleset that loaded, to boot from when KV is unreachable. */
+  readonly lastKnownGood?: LastKnownGoodStore;
 }
 
 export const DEFAULT_FLAGS_KEY = 'flags:current';
@@ -41,15 +46,29 @@ export class KvFlagProvider implements FlagProvider {
   readonly #key: string;
   readonly #cacheTtl: number | undefined;
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
+  readonly #lastKnownGood: LastKnownGoodStore | undefined;
 
   constructor(options: KvProviderOptions) {
     this.#namespace = options.namespace;
     this.#key = options.key ?? DEFAULT_FLAGS_KEY;
     this.#cacheTtl = options.cacheTtlSeconds;
     this.#onParseIssues = options.onParseIssues;
+    this.#lastKnownGood = options.lastKnownGood;
   }
 
-  async load(previous?: FlagSnapshot): Promise<FlagSnapshot | null> {
+  load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
+    const source: RulesetSourceOptions = {
+      lastKnownGood: this.#lastKnownGood,
+      onParseIssues: this.#onParseIssues,
+      context,
+    };
+    return loadWithFallback(previous, () => this.#readRuleset(previous, source), source);
+  }
+
+  async #readRuleset(
+    previous: FlagSnapshot | undefined,
+    source: RulesetSourceOptions,
+  ): Promise<FlagSnapshot | null> {
     const { value, metadata } = await this.#namespace.getWithMetadata<unknown, KvFlagMetadata>(
       this.#key,
       {
@@ -65,10 +84,7 @@ export class KvFlagProvider implements FlagProvider {
     const revision = metadata?.revision;
     if (revision !== undefined && previous?.version === revision) return null;
 
-    const { flags, segments, issues } = parseRuleset(value);
-    if (issues.length > 0) this.#onParseIssues?.(issues);
-
-    return createSnapshot(flags, revision === undefined ? {} : { version: revision }, segments);
+    return snapshotFromRuleset(value, revision === undefined ? {} : { version: revision }, source);
   }
 }
 

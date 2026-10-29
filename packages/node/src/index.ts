@@ -6,6 +6,9 @@
  * this package re-exports for convenience.
  */
 
+export { FileLastKnownGoodStore } from './file-last-known-good-store.js';
+export type { FileLastKnownGoodStoreOptions } from './file-last-known-good-store.js';
+
 export { FileFlagProvider } from './file-provider.js';
 export type { FileProviderOptions } from './file-provider.js';
 

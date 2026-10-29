@@ -11,6 +11,12 @@ import type { Segment, SegmentDefinition } from '../model/segment.js';
 import { createSnapshot } from './snapshot.js';
 import type { FlagSnapshot, SnapshotMeta } from './snapshot.js';
 
+/** What the client hands a provider on each load. */
+export interface ProviderLoadContext {
+  /** Reports a failure that did not stop the load, such as an outage covered by a fallback. */
+  readonly reportError: (error: unknown, operation: 'load' | 'store') => void;
+}
+
 export interface FlagProvider {
   readonly name: string;
 
@@ -20,7 +26,7 @@ export interface FlagProvider {
    * `previous` is passed so a provider can do a conditional fetch; return
    * `null` to signal "nothing changed" and keep the existing snapshot.
    */
-  load(previous?: FlagSnapshot): Promise<FlagSnapshot | null>;
+  load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null>;
 
   /** Releases timers, sockets, or watchers. Called by `FeatureFlagClient.close()`. */
   close?(): Promise<void>;

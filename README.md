@@ -286,6 +286,18 @@ if (flags.getBoolean('new-checkout', false, { targetingKey: user.id, plan: user.
 `FileFlagProvider` is the alternative for flags shipped with the deployment or
 mounted from a ConfigMap.
 
+To keep booting while the control plane is down, give the provider a store for
+the last ruleset that loaded (see [Failure behaviour](#failure-behaviour)):
+
+```ts
+import { FileLastKnownGoodStore, HttpFlagProvider } from '@kurenwimpel/node';
+
+const provider = new HttpFlagProvider({
+  url: process.env.FLAGS_URL!,
+  lastKnownGood: new FileLastKnownGoodStore({ path: '/var/lib/billing/flags.json' }),
+});
+```
+
 ### Cloudflare Workers
 
 ```ts
@@ -324,9 +336,20 @@ fails.
 
 - The **first** load is strict: `init()` / `start()` reject, so a service that
   cannot read its flags at startup should fail to start rather than serving every
-  request on fallbacks. A provider answering "unchanged" to that first load —
-  a 304 from a caching proxy, say — counts as a failure: there is no snapshot
+  request on fallbacks. A provider answering "unchanged" to that first load (a
+  304 from a caching proxy, say) counts as a failure: there is no snapshot
   behind it to serve.
+- A provider given a **last-known-good store** softens that first load. Every
+  ruleset that loads is written to the store, and when the first load fails the
+  provider boots from the stored copy instead. The client comes up `ready`,
+  `snapshot.origin` reads `'fallback'`, `snapshot.fetchedAt` is when the stored
+  copy was fetched, and the original error still goes to `onError`. The first
+  successful refresh replaces it, and a 304 or "unchanged" answer against it
+  re-marks the same snapshot `'live'`. An empty, unreadable or corrupt store
+  changes nothing: `init()` rejects with the original error. A failed write is
+  reported through `onError` with operation `'store'` and never fails a load.
+  A stored ruleset has no age limit, so alert on `origin` if an old kill switch
+  must not come back after a long outage.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
 - A **malformed flag or segment** is dropped and reported through
@@ -361,14 +384,18 @@ Implement `FlagProvider` and hand it to `FeatureFlagClient`:
 interface FlagProvider {
   readonly name: string;
   // Return null to mean "unchanged"; `previous` enables conditional fetching.
-  load(previous?: FlagSnapshot): Promise<FlagSnapshot | null>;
+  // `context.reportError` reaches the client's `onError`.
+  load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null>;
   close?(): Promise<void>;
 }
 ```
 
-`parseRuleset(raw)` from the core does the validation — flags and segments in
-one payload — and `createSnapshot` builds the result. That is the whole contract
-— see `packages/node/src/file-provider.ts` for the smallest complete example.
+`snapshotFromRuleset(raw, meta, options)` from the core validates a raw payload
+(flags and segments in one document), builds the snapshot and writes the payload
+to a `lastKnownGood` store when one is given. Wrapping the live load in
+`loadWithFallback(previous, load, options)` adds the store fallback. That is the
+whole contract: see `packages/node/src/file-provider.ts` for the smallest
+complete example.
 
 ## Speaking OpenFeature
 

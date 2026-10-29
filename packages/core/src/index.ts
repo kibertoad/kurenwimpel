@@ -86,6 +86,20 @@ export type {
   ResolvedEvaluation,
 } from './runtime/client.js';
 export { StaticProvider } from './runtime/provider.js';
-export type { FlagProvider, StaticProviderContents } from './runtime/provider.js';
+export type {
+  FlagProvider,
+  ProviderLoadContext,
+  StaticProviderContents,
+} from './runtime/provider.js';
+export {
+  isStoredRuleset,
+  loadWithFallback,
+  snapshotFromRuleset,
+} from './runtime/last-known-good.js';
+export type {
+  LastKnownGoodStore,
+  RulesetSourceOptions,
+  StoredRuleset,
+} from './runtime/last-known-good.js';
 export { completeSnapshot, createSnapshot, EMPTY_SNAPSHOT } from './runtime/snapshot.js';
-export type { FlagSnapshot, SnapshotMeta } from './runtime/snapshot.js';
+export type { FlagSnapshot, SnapshotMeta, SnapshotOrigin } from './runtime/snapshot.js';

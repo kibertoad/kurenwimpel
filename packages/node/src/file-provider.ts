@@ -1,11 +1,14 @@
 import { readFile, stat } from 'node:fs/promises';
 
 import {
-  createSnapshot,
-  parseRuleset,
+  loadWithFallback,
+  snapshotFromRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
+  type LastKnownGoodStore,
+  type ProviderLoadContext,
+  type RulesetSourceOptions,
 } from '@kurenwimpel/core';
 
 export interface FileProviderOptions {
@@ -13,6 +16,8 @@ export interface FileProviderOptions {
   readonly path: string;
   /** Called for definitions that failed validation; the rest still load. */
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
+  /** Where to keep the last ruleset that loaded, to boot from when the file is unreadable. */
+  readonly lastKnownGood?: LastKnownGoodStore;
 }
 
 /**
@@ -27,13 +32,27 @@ export class FileFlagProvider implements FlagProvider {
 
   readonly #path: string;
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
+  readonly #lastKnownGood: LastKnownGoodStore | undefined;
 
   constructor(options: FileProviderOptions) {
     this.#path = options.path;
     this.#onParseIssues = options.onParseIssues;
+    this.#lastKnownGood = options.lastKnownGood;
   }
 
-  async load(previous?: FlagSnapshot): Promise<FlagSnapshot | null> {
+  load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
+    const source: RulesetSourceOptions = {
+      lastKnownGood: this.#lastKnownGood,
+      onParseIssues: this.#onParseIssues,
+      context,
+    };
+    return loadWithFallback(previous, () => this.#readRuleset(previous, source), source);
+  }
+
+  async #readRuleset(
+    previous: FlagSnapshot | undefined,
+    source: RulesetSourceOptions,
+  ): Promise<FlagSnapshot | null> {
     const stats = await stat(this.#path);
     const version = `${stats.mtimeMs}:${stats.size}`;
 
@@ -48,9 +67,6 @@ export class FileFlagProvider implements FlagProvider {
       throw new Error(`Flag file ${this.#path} is not valid JSON`, { cause: error });
     }
 
-    const { flags, segments, issues } = parseRuleset(raw);
-    if (issues.length > 0) this.#onParseIssues?.(issues);
-
-    return createSnapshot(flags, { version }, segments);
+    return snapshotFromRuleset(raw, { version }, source);
   }
 }
