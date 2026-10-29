@@ -85,6 +85,20 @@ export type {
   FeatureFlagClientOptions,
 } from './runtime/client-options.js';
 export type { ImpressionEvent } from './runtime/impressions.js';
+export {
+  createImpressionBatcher,
+  DEFAULT_IMPRESSION_DEDUP_WINDOW_MS,
+  DEFAULT_IMPRESSION_FLUSH_INTERVAL_MS,
+  DEFAULT_IMPRESSION_MAX_BATCH_SIZE,
+  DEFAULT_IMPRESSION_MAX_DEDUP_KEYS,
+  DEFAULT_IMPRESSION_MAX_QUEUE_SIZE,
+} from './runtime/impression-batcher.js';
+export type {
+  ImpressionBatcher,
+  ImpressionBatcherOptions,
+  ImpressionBatcherStats,
+  ScheduledImpressionOptions,
+} from './runtime/impression-batcher.js';
 export { CountingMetrics } from './runtime/metrics.js';
 export type { EvaluationCount, MetricsSink } from './runtime/metrics.js';
 export type { ClientStatus } from './runtime/status.js';

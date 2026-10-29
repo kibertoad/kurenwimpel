@@ -1,9 +1,14 @@
 import {
+  createImpressionBatcher,
+  DEFAULT_IMPRESSION_FLUSH_INTERVAL_MS,
   FeatureFlagClient,
   snapshotFromRuleset,
   type EvaluationContext,
   type FlagProvider,
+  type ImpressionBatcher,
+  type ImpressionBatcherStats,
   type ImpressionEvent,
+  type ScheduledImpressionOptions,
 } from '@kurenwimpel/core';
 
 export interface WorkerFlagsOptions {
@@ -30,6 +35,14 @@ export interface WorkerFlagsOptions {
   readonly retryAfterMs?: number;
   /** A raw ruleset to serve, marked `origin: 'fallback'`, when the cold load fails. */
   readonly bootstrap?: unknown;
+  /**
+   * Batches and deduplicates the impression feed into `impressions.flush`.
+   * Timers do not run between requests, so `get(ctx)` hands a flush to
+   * `ctx.waitUntil` once events are queued and `flushIntervalMs` has passed
+   * since the last one. Runs alongside `onImpression`; a failed batch goes to
+   * `impressions.onError`, or else `onError`.
+   */
+  readonly impressions?: ScheduledImpressionOptions;
 }
 
 export type InitFailureMode = 'serve-defaults' | 'throw';
@@ -53,12 +66,15 @@ export class WorkerFlags {
   readonly #onInitFailure: InitFailureMode;
   readonly #bootstrap: unknown;
   readonly #onError: ((error: Error) => void) | undefined;
+  readonly #impressions: ImpressionBatcher | undefined;
+  readonly #impressionFlushIntervalMs: number;
 
   #initPromise: Promise<void> | undefined;
   #lastLoadedAt = 0;
   #retryAt = 0;
   #initError: unknown;
   #refreshInFlight: Promise<void> | undefined;
+  #lastImpressionFlushAt = Date.now();
 
   constructor(options: WorkerFlagsOptions) {
     this.#refreshIntervalMs = options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
@@ -66,11 +82,15 @@ export class WorkerFlags {
     this.#onInitFailure = options.onInitFailure ?? 'serve-defaults';
     this.#bootstrap = options.bootstrap;
     this.#onError = options.onError;
+    this.#impressions = batcherFor(options);
+    this.#impressionFlushIntervalMs =
+      options.impressions?.flushIntervalMs ?? DEFAULT_IMPRESSION_FLUSH_INTERVAL_MS;
+    const onImpression = chain(options.onImpression, this.#impressions?.onImpression);
     this.#client = new FeatureFlagClient({
       provider: options.provider,
       ...(options.defaultContext === undefined ? {} : { defaultContext: options.defaultContext }),
       ...(options.onError === undefined ? {} : { onError: options.onError }),
-      ...(options.onImpression === undefined ? {} : { onImpression: options.onImpression }),
+      ...(onImpression === undefined ? {} : { onImpression }),
     });
   }
 
@@ -84,6 +104,8 @@ export class WorkerFlags {
    * `ctx.waitUntil` so it outlives the response.
    */
   async get(ctx?: Pick<ExecutionContext, 'waitUntil'>): Promise<FeatureFlagClient> {
+    await this.#scheduleImpressionFlush(ctx);
+
     if (!this.#client.ready) {
       if (Date.now() < this.#retryAt) return this.#notReady();
       // Concurrent requests on a cold isolate share one load.
@@ -99,6 +121,33 @@ export class WorkerFlags {
     }
 
     return this.#client;
+  }
+
+  /**
+   * Sends every queued impression now. For a `scheduled` handler, or a
+   * `ctx.waitUntil` at the end of a request that must not wait for the next
+   * `get()`. Never rejects.
+   */
+  flushImpressions(): Promise<void> {
+    this.#lastImpressionFlushAt = Date.now();
+    return this.#impressions?.flush() ?? Promise.resolve();
+  }
+
+  /** Counts from the impression batcher, or undefined without `impressions`. */
+  impressionStats(): ImpressionBatcherStats | undefined {
+    return this.#impressions?.stats();
+  }
+
+  /** Awaited only when there is no `ctx` to hand the flush to, as a refresh is. */
+  async #scheduleImpressionFlush(
+    ctx: Pick<ExecutionContext, 'waitUntil'> | undefined,
+  ): Promise<void> {
+    if (this.#impressions === undefined || this.#impressions.stats().queued === 0) return;
+    if (Date.now() - this.#lastImpressionFlushAt < this.#impressionFlushIntervalMs) return;
+
+    const flush = this.flushImpressions();
+    if (ctx === undefined) await flush;
+    else ctx.waitUntil(flush);
   }
 
   /** The client as-is, ready or not. For call sites that cannot await. */
@@ -153,4 +202,27 @@ export class WorkerFlags {
       this.#refreshInFlight = undefined;
     }
   }
+}
+
+function batcherFor(options: WorkerFlagsOptions): ImpressionBatcher | undefined {
+  if (options.impressions === undefined) return undefined;
+  const onError = options.impressions.onError ?? options.onError;
+  return createImpressionBatcher({
+    ...options.impressions,
+    ...(onError === undefined ? {} : { onError }),
+  });
+}
+
+type ImpressionHook = (event: ImpressionEvent) => void;
+
+function chain(
+  first: ImpressionHook | undefined,
+  second: ImpressionHook | undefined,
+): ImpressionHook | undefined {
+  if (first === undefined) return second;
+  if (second === undefined) return first;
+  return (event) => {
+    second(event);
+    first(event);
+  };
 }

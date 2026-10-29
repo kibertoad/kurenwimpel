@@ -5,7 +5,14 @@ import type { FlagProvider } from './provider.js';
 import type { FlagSnapshot } from './snapshot.js';
 
 export interface ClientErrorInfo {
-  readonly operation: 'load' | 'close' | 'impression' | 'store' | 'metrics' | 'snapshotChange';
+  readonly operation:
+    | 'load'
+    | 'close'
+    | 'impression'
+    | 'impressionFlush'
+    | 'store'
+    | 'metrics'
+    | 'snapshotChange';
   readonly provider: string;
 }
 

@@ -289,7 +289,7 @@ const flags = new PollingFlagClient({
   pollIntervalMs: 30_000,
   defaultContext: { service: 'billing' },
   onError: (error, info) => logger.warn({ error, ...info }, 'flag refresh failed'),
-  onImpression: (event) => analytics.enqueue(event), // exposure feed for A/B analysis
+  impressions: { flush: (events) => analytics.send(events) }, // batched exposure feed, see Impressions
 });
 
 await flags.start(); // throws if the first load fails
@@ -445,6 +445,53 @@ flags ??= new WorkerFlags({
 Stamp `{ revision: string }` as the KV metadata when writing the ruleset — the
 provider uses it to skip re-parsing an unchanged payload.
 
+### Impressions
+
+`onImpression` fires synchronously once per evaluation, so a request that reads
+a flag five times produces five identical events. The `impressions` option on
+`PollingFlagClient` and `WorkerFlags` puts a batcher in front of your sink
+instead: it deduplicates repeats, queues the rest in bounded memory, and hands
+them to `flush` in batches. Both still call `onImpression` for every evaluation
+when you pass it too.
+
+```ts
+const flags = new PollingFlagClient({
+  provider,
+  impressions: {
+    flush: (events) => analytics.send(events), // a rejection drops the batch
+    onError: (error) => logger.warn({ error }, 'impression batch dropped'),
+  },
+});
+```
+
+| Option            | Default  | Effect                                                                                                                                  |
+| ----------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `flush`           | required | `(events) => Promise<void>`, called with at most `maxBatchSize` events, one batch at a time.                                            |
+| `maxBatchSize`    | `500`    | A queue this long is flushed straight away, without waiting for the interval.                                                           |
+| `dedupWindowMs`   | `60000`  | Drops an event when the last one sent for the same flag and `targetingKey` had the same `variant` and `flagVersion` and is this recent. |
+| `maxQueueSize`    | `10000`  | Past this the oldest queued event is dropped and counted in `stats().dropped`, so a slow or dead sink cannot grow memory.               |
+| `maxDedupKeys`    | `100000` | Flag and subject pairs remembered for deduplication. Forgetting one can only let a repeat through.                                      |
+| `onError`         | none     | Called when `flush` rejects. The batch is dropped, not retried. Without it the client's `onError` is used.                              |
+| `flushIntervalMs` | `10000`  | How often the platform wrapper flushes.                                                                                                 |
+
+A change of variant or flag version is always sent, even a flip back to an
+earlier variant inside the window: that is the event an experiment is measuring.
+On Node the interval timer is unref'd and `close()` flushes what is queued. On
+Workers, timers do not run between requests, so `get(ctx)` hands a flush to
+`ctx.waitUntil` once events are queued and `flushIntervalMs` has passed; call
+`flushImpressions()` from a `scheduled` handler or at the end of a request to
+send sooner. `impressionStats()` reports `queued`, `flushed`, `deduplicated`,
+`dropped` and `failed` counts.
+
+There is no sampling option. Dropping a uniform share of events keeps usage
+counts in proportion but loses first exposures, which biases any experiment
+analysis built on them. For usage counts, use `CountingMetrics` (see
+[Health and metrics](#health-and-metrics)).
+
+`createImpressionBatcher(options)` from `@kurenwimpel/core` is the same batcher
+without the scheduling, for a custom wrapper: it returns `{ onImpression, flush,
+close, stats }`, and you pass its `onImpression` to the client.
+
 ## Failure behaviour
 
 The design assumption is that a flag lookup must never be the reason a request
@@ -502,7 +549,9 @@ fails.
   answering it with zero flags is indistinguishable from a healthy empty
   ruleset. Check `ready` first if a 5xx is not what you want.
 - A throwing `onImpression` hook or `metrics` sink is reported through `onError`
-  and never fails the evaluation. A throwing `onSnapshotChange` is reported the
+  and never fails the evaluation. A rejected impression batch is dropped and
+  reported through `impressions.onError`, or else the client's `onError` (with
+  operation `impressionFlush` on Node). A throwing `onSnapshotChange` is reported the
   same way, and the snapshot is installed regardless.
 
 ## Limits
