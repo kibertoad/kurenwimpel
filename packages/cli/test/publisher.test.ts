@@ -118,7 +118,9 @@ describe('kurenwimpel publish', () => {
   it('exits 2 on a wrong number of arguments or an unknown environment', async () => {
     const files = { 'kurenwimpel.config.json': config, 'a.json': readmeRuleset() };
 
-    expect((await runCli(['publish', 'local'], files)).stderr).toContain('expected <env> <file>');
+    expect((await runCli(['publish'], files)).stderr).toContain('expected <env> [<file>]');
+    const extra = await runCli(['publish', 'local', 'a.json', 'b.json'], files);
+    expect(extra.code).toBe(ExitCode.Usage);
     const unknown = await runCli(['publish', 'staging', 'a.json'], files);
     expect(unknown.code).toBe(ExitCode.Usage);
     expect(unknown.stderr).toContain(

@@ -1,0 +1,51 @@
+{
+  "$schema": "https://unpkg.com/@kurenwimpel/core/schema/ruleset.schema.json",
+  "schemaVersion": 1,
+  "flags": [
+    {
+      "key": "new-checkout",
+      "enabled": true,
+      "variants": { "on": true, "off": false },
+      "defaultVariant": "off",
+      "offVariant": "off",
+      "metadata": { "experiment": "checkout-q3" },
+      "prerequisites": [{ "flag": "new-backend", "variants": ["on"] }],
+      "targets": [{ "variant": "on", "keys": ["qa-account-1"] }],
+      "allocation": { "percent": 20 },
+      "rules": [
+        {
+          "id": "internal-staff",
+          "conditions": [{ "operator": "inSegment", "segments": ["employees"] }],
+          "variant": "on"
+        },
+        {
+          "id": "recent-app",
+          "conditions": [{ "attribute": "appVersion", "operator": "semverGte", "value": "2.4.0" }],
+          "rollout": [
+            { "variant": "on", "weight": 50 },
+            { "variant": "off", "weight": 50 }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "new-backend",
+      "enabled": true,
+      "variants": { "on": true, "off": false },
+      "defaultVariant": "on",
+      "offVariant": "off"
+    }
+  ],
+  "segments": [
+    {
+      "key": "employees",
+      "included": ["emp-1", "emp-2"],
+      "rules": [
+        {
+          "id": "staff-email",
+          "conditions": [{ "attribute": "email", "operator": "endsWith", "value": "@acme.test" }]
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, parseConfig, resolveTarget } from '../src/index.js';
+import { ConfigError, parseConfig, resolveRuleset, resolveTarget } from '../src/index.js';
 
 const parse = (raw: unknown) => () => parseConfig(raw, 'k.json');
 const withTarget = (target: unknown) => ({ environments: { prod: { target } } });
@@ -53,6 +53,45 @@ describe('parseConfig', () => {
     );
     expect(parse({ environments: [] })).toThrow('k.json: environments must be an object');
     expect(parse({ environments: {}, extra: 1 })).toThrow(ConfigError);
+  });
+});
+
+describe('environment fields', () => {
+  const target = { type: 'file', path: 'x' };
+
+  it('accepts a ruleset path and approvers', () => {
+    const config = parseConfig(
+      { environments: { prod: { target, ruleset: 'p.json', approvers: ['@acme/flags'] } } },
+      'k.json',
+    );
+    expect(config.environments['prod']).toEqual({
+      target,
+      ruleset: 'p.json',
+      approvers: ['@acme/flags'],
+    });
+  });
+
+  it('rejects approvers that are not a list of owners', () => {
+    const message =
+      'environments.prod.approvers must be a non-empty array of owners without spaces';
+    for (const approvers of [[], '@acme/flags', ['@acme flags'], [3]]) {
+      expect(parse({ environments: { prod: { target, approvers } } })).toThrow(message);
+    }
+    expect(parse({ environments: { prod: { target, ruleset: '' } } })).toThrow(
+      'environments.prod.ruleset must be a non-empty string',
+    );
+  });
+
+  it('resolves the ruleset against the config directory, defaulting to <env>.json', () => {
+    const config = parseConfig(
+      { environments: { prod: { target }, dev: { target, ruleset: 'd/dev.json' } } },
+      'x',
+    );
+    const loaded = { path: 'flags/kurenwimpel.config.json', config };
+
+    expect(resolveRuleset(loaded, 'prod')).toMatch(/^flags[/\\]prod\.json$/u);
+    expect(resolveRuleset(loaded, 'dev')).toMatch(/^flags[/\\]d[/\\]dev\.json$/u);
+    expect(() => resolveRuleset(loaded, 'qa')).toThrow('environment "qa" is not in');
   });
 });
 

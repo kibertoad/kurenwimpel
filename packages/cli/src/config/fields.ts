@@ -71,3 +71,17 @@ export function pickStrings<K extends string>(
   }
   return picked;
 }
+
+/** CODEOWNERS owners. Whitespace would split one owner into two on a CODEOWNERS line. */
+export function optionalOwners(fields: Fields, name: string, at: string): string[] | undefined {
+  const value = fields[name];
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || !value.every((owner) => isOwner(owner))) {
+    throw new ConfigError(`${at}.${name} must be a non-empty array of owners without spaces`);
+  }
+  return value;
+}
+
+function isOwner(value: unknown): value is string {
+  return typeof value === 'string' && /^\S+$/u.test(value);
+}

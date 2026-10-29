@@ -7,6 +7,8 @@ import {
   objectAt,
   onlyFields,
   optionalKeep,
+  optionalOwners,
+  optionalString,
   pickStrings,
   requiredString,
 } from './fields.js';
@@ -32,18 +34,24 @@ export function parseConfig(raw: unknown, source: string): KurenwimpelConfig {
   const parsed: Record<string, EnvironmentConfig> = {};
   for (const [name, value] of Object.entries(environments)) {
     const at = `${source}: environments.${name}`;
-    const fields = objectAt(value, at);
-    onlyFields(fields, ['target'], at);
-    parsed[name] = { target: parseTarget(fields['target'], `${at}.target`) };
+    parsed[name] = parseEnvironment(objectAt(value, at), at);
   }
   return { environments: parsed };
 }
 
-/**
- * The target `<env>` publishes to, with a relative file path resolved against
- * the directory holding the config file.
- */
-export function resolveTarget(loaded: LoadedConfig, environment: string): TargetConfig {
+function parseEnvironment(fields: Fields, at: string): EnvironmentConfig {
+  onlyFields(fields, ['target', 'ruleset', 'approvers'], at);
+  const ruleset = optionalString(fields, 'ruleset', at);
+  const approvers = optionalOwners(fields, 'approvers', at);
+  return {
+    target: parseTarget(fields['target'], `${at}.target`),
+    ...(ruleset === undefined ? {} : { ruleset }),
+    ...(approvers === undefined ? {} : { approvers }),
+  };
+}
+
+/** The config entry of `<env>`, or a {@link ConfigError} naming the environments that exist. */
+export function environmentOf(loaded: LoadedConfig, environment: string): EnvironmentConfig {
   const { environments } = loaded.config;
   if (!Object.hasOwn(environments, environment)) {
     const known = Object.keys(environments).join(', ') || 'none';
@@ -51,10 +59,27 @@ export function resolveTarget(loaded: LoadedConfig, environment: string): Target
       `environment "${environment}" is not in ${loaded.path} (configured: ${known})`,
     );
   }
+  return environments[environment]!;
+}
 
-  const { target } = environments[environment]!;
-  if (target.type !== 'file' || isAbsolute(target.path)) return target;
-  return { ...target, path: join(dirname(loaded.path), target.path) };
+/**
+ * The target `<env>` publishes to, with a relative file path resolved against
+ * the directory holding the config file.
+ */
+export function resolveTarget(loaded: LoadedConfig, environment: string): TargetConfig {
+  const { target } = environmentOf(loaded, environment);
+  if (target.type !== 'file') return target;
+  return { ...target, path: relativeToConfig(loaded, target.path) };
+}
+
+/** The ruleset document of `<env>`, resolved the same way. Defaults to `<env>.json`. */
+export function resolveRuleset(loaded: LoadedConfig, environment: string): string {
+  const { ruleset = `${environment}.json` } = environmentOf(loaded, environment);
+  return relativeToConfig(loaded, ruleset);
+}
+
+function relativeToConfig(loaded: LoadedConfig, path: string): string {
+  return isAbsolute(path) ? path : join(dirname(loaded.path), path);
 }
 
 function parseTarget(value: unknown, at: string): TargetConfig {

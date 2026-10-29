@@ -1,0 +1,18 @@
+{
+  "environments": {
+    "production": {
+      "ruleset": "production.json",
+      "approvers": ["@acme/flags-production"],
+      "target": { "type": "kv", "namespaceId": "9c41d0c3b8f94bb0a6e2f3c1d4e5f601" }
+    },
+    "staging": {
+      "ruleset": "staging.json",
+      "approvers": ["@acme/flags-staging"],
+      "target": { "type": "kv", "namespaceId": "4b7e2a91c0d34f5e8a6b1c2d3e4f5a60" }
+    },
+    "development": {
+      "ruleset": "development.json",
+      "target": { "type": "kv", "namespaceId": "e1f2a3b4c5d64e7f8a9b0c1d2e3f4a5b" }
+    }
+  }
+}

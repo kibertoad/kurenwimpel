@@ -6,7 +6,13 @@ import { plural } from '../format/words.js';
 import { publishRuleset } from '../publish/publisher.js';
 import type { PublishResult } from '../publish/publisher.js';
 import { loadRuleset, toJson } from '../ruleset-file.js';
-import { CONFIG_OPTION, CONFIG_USAGE, environmentArgument, openTarget } from './environment.js';
+import {
+  CONFIG_OPTION,
+  CONFIG_USAGE,
+  environmentArgument,
+  openTarget,
+  rulesetArgument,
+} from './environment.js';
 
 export interface PublishReport extends PublishResult {
   readonly environment: string;
@@ -17,8 +23,9 @@ export const publishCommand: Command = {
   name: 'publish',
   summary: "Publish a ruleset to an environment's target, as a new revision.",
   usage: [
-    'Usage: kurenwimpel publish <env> <file> [--config <path>] [--allow-issues] [--format text|json]',
+    'Usage: kurenwimpel publish <env> [<file>] [--config <path>] [--allow-issues] [--format text|json]',
     '',
+    "<file> defaults to the environment's ruleset in the config.",
     'Refuses a ruleset with parse issues and exits 1. --allow-issues publishes it anyway,',
     'for emergencies. Publishing the revision the target already serves writes nothing.',
     CONFIG_USAGE,
@@ -26,11 +33,12 @@ export const publishCommand: Command = {
   options: { ...FORMAT_OPTION, ...CONFIG_OPTION, 'allow-issues': { type: 'boolean' } },
   async run(args, io) {
     const format = formatOption(args, ['text', 'json']);
-    const [environment = '', file = ''] = environmentArgument(args, ['<file>']);
+    const [environment = '', named] = environmentArgument(args, [], ['<file>']);
     const allowIssues = booleanOption(args, 'allow-issues');
+    const file = await rulesetArgument(args, io, environment, named);
 
-    // Checked before the config is read, so a broken ruleset fails the same way
-    // in a pull request check that has no credentials.
+    // Checked before any credential is read, so a broken ruleset fails the same
+    // way in a pull request check that has none.
     const loaded = await loadRuleset(io, file);
     const { issues } = loaded.parsed;
     if (issues.length > 0 && !allowIssues) {

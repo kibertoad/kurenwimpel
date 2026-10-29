@@ -334,6 +334,54 @@ response path.
 re-parsing an unchanged payload, and `kurenwimpel rollback` repoints it at an
 earlier revision. See the [CLI README](packages/cli/README.md#publish).
 
+## Running it in production
+
+The control plane is a Git repository. [`examples/gitops`](examples/gitops/README.md)
+is a template for one: a `flags/` directory with one complete ruleset per
+environment, a `kurenwimpel.config.json` mapping each environment to its publish
+target and its approvers, a CODEOWNERS file, and a GitHub Actions workflow that
+ties `validate`, `diff` and `publish` together. CI in this repository runs the
+template's commands against file targets, so it keeps working as the CLI changes.
+
+End to end:
+
+1. Someone edits `flags/staging.json` and opens a pull request.
+2. The workflow validates every environment the change touches. Each issue shows
+   as an annotation on the line of the broken flag, and fails the check.
+3. A sticky comment shows what the change does to live traffic, environment by
+   environment, and says so when it reshuffles a rollout.
+4. CODEOWNERS requests a review from the environment's approvers, and branch
+   protection requires it.
+5. On merge, a job bound to the GitHub environment `staging` publishes the new
+   revision with that environment's credentials, once the environment's required
+   reviewers, if it has any, approve the deployment.
+6. If the publish or a check after it fails, the job prints the
+   `kurenwimpel rollback` command, and a manual workflow runs it under the same
+   protection.
+
+What this gives you:
+
+- An audit log: every change is a commit with an author, a reviewer and a pull
+  request explaining it.
+- Approvals per environment, from CODEOWNERS and GitHub environment protection.
+- Review of the effect, not the JSON: the diff names widened allocations,
+  reshuffled rollouts and rebucketed subjects.
+- Rollback without a rebuild to any revision a `kv` or `file` target keeps, and
+  `git revert` for the lasting fix.
+- No service of its own to run: GitHub, the CLI and the publish target are all of it.
+
+What it does not give you:
+
+- Scheduled changes, such as turning a flag on at a set time. That is
+  [#13](https://github.com/kibertoad/kurenwimpel/issues/13).
+- A UI for people who do not edit JSON in pull requests. That is
+  [#23](https://github.com/kibertoad/kurenwimpel/issues/23).
+- Promotion between environments. Each environment publishes as soon as its own
+  change merges, in no order relative to the others; copying a change from staging
+  to production is a second pull request.
+- Drift detection. A publish or rollback run by hand, outside the workflow, is not
+  noticed until the next merge to that environment overwrites it.
+
 ## Failure behaviour
 
 The design assumption is that a flag lookup must never be the reason a request
