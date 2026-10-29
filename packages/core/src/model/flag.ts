@@ -135,6 +135,21 @@ export interface TargetingRule {
  */
 export type FlagMetadata = Readonly<Record<string, boolean | string | number>>;
 
+/** Why a flag exists. `ops` and `permission` flags are long-lived by design; the other two are meant to be removed. */
+export type FlagKind = 'release' | 'experiment' | 'ops' | 'permission';
+
+/**
+ * Who owns a flag and when it should be gone. Read by tooling only: evaluation
+ * ignores it, and it is kept out of `metadata` so it never reaches a client.
+ */
+export interface FlagLifecycle {
+  readonly owner?: string;
+  readonly kind?: FlagKind;
+  /** A calendar date, `YYYY-MM-DD`. */
+  readonly expiresOn?: string;
+  readonly tags?: readonly string[];
+}
+
 /**
  * A flag as stored in the control plane.
  *
@@ -157,4 +172,5 @@ export interface FlagDefinition<T extends FlagValue = FlagValue> {
   readonly salt?: string;
   readonly version?: number;
   readonly metadata?: FlagMetadata;
+  readonly lifecycle?: FlagLifecycle;
 }

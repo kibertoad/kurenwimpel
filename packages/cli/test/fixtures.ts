@@ -28,6 +28,7 @@ export interface TestFlag {
   defaultVariant: string;
   offVariant: string;
   metadata?: Record<string, string>;
+  lifecycle?: { owner?: string; kind?: string; expiresOn?: string; tags?: string[] };
   prerequisites?: { flag: string; variants: string[] }[];
   targets?: { variant: string; keys: string[] }[];
   allocation?: { percent: number; seed?: string; bucketBy?: string };
@@ -91,11 +92,12 @@ export interface CliOutcome {
   readonly stderr: string;
 }
 
-export type IoOverrides = Partial<Pick<CliIo, 'env' | 'fetch' | 'now'>>;
+export type IoOverrides = Partial<Pick<CliIo, 'env' | 'fetch' | 'now' | 'git'>>;
 
 /**
  * Runs the CLI in memory. `files` maps a path to its parsed content, or to raw
- * text. The network refuses every request unless `overrides.fetch` is given.
+ * text. The network refuses every request unless `overrides.fetch` is given, and
+ * git fails unless `overrides.git` is. `listFiles` lists the paths of `files`.
  */
 export async function runCli(
   argv: readonly string[],
@@ -119,6 +121,9 @@ export async function runCli(
     env: {},
     fetch: () => Promise.reject(new Error('no network in tests')),
     now: () => new Date('2026-01-01T00:00:00.000Z'),
+    git: () => Promise.reject(new Error('no git in tests')),
+    listFiles: (directory) =>
+      Promise.resolve(Object.keys(files).filter((path) => path.startsWith(`${directory}/`))),
     ...overrides,
   };
   const code = await run(argv, io);

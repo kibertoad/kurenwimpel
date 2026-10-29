@@ -1,8 +1,8 @@
 # @kurenwimpel/cli
 
 The `kurenwimpel` command: validate a ruleset before it ships, see what an edit
-does to live traffic, explain why a context gets the variant it gets, and publish
-it with revisions you can roll back to.
+does to live traffic, explain why a context gets the variant it gets, find the
+flags due for removal, and publish it with revisions you can roll back to.
 
 ```sh
 npm install --save-dev @kurenwimpel/cli
@@ -64,6 +64,7 @@ covers what parsed.
 | `off-variant-changed`     | `offVariant`                     |                                                                       |
 | `prerequisites-changed`   | `prerequisites`                  |                                                                       |
 | `metadata-changed`        | `metadata`                       |                                                                       |
+| `lifecycle-changed`       | `lifecycle`                      | No effect on traffic: owner, kind, expiry or tags.                    |
 | `included-changed`        | `included` (segment)             | Counts of keys added to and removed from the list.                    |
 | `excluded-changed`        | `excluded` (segment)             | Counts of keys added to and removed from the list.                    |
 | `segment-rules-changed`   | `rules` (segment)                | Counts of membership rules added, removed and changed. Order ignored. |
@@ -81,6 +82,56 @@ kurenwimpel eval flags.json --all --context '{"targetingKey":"user-1"}' --format
 Evaluates through the same engine a service runs and prints the value, variant,
 reason, the rule that decided, and each prerequisite's outcome. The context is
 the flat OpenFeature shape and defaults to `{}`.
+
+## `lint`
+
+```sh
+kurenwimpel lint flags.json [--since-git] [--now <date>] [--config <path>] [--format text|json|markdown|github]
+```
+
+Finds the flags that should be removed. It reads each flag's `lifecycle` block:
+
+```json
+"lifecycle": { "owner": "team-checkout", "kind": "release", "expiresOn": "2027-01-31", "tags": ["checkout"] }
+```
+
+| Rule               | Severity | Reported when                                                                                          |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------ |
+| `expired`          | error    | `lifecycle.expiresOn` is before today (UTC).                                                           |
+| `fully-rolled-out` | warning  | The flag is on and every path but its targets serves one variant: no prerequisite, no allocation gate. |
+| `permanently-off`  | warning  | `enabled` is `false`. With `--since-git`, the finding says since when.                                 |
+| `missing-owner`    | warning  | There is no `lifecycle.owner`. Off unless the config sets `lint.requireOwner`.                         |
+
+- Flags of kind `ops` (kill switches, circuit breakers) and `permission`
+  (entitlements) are long-lived by design, so the first three rules skip them.
+  `missing-owner` still applies.
+- `--since-git` walks `git log` of the file back to the commit that switched each
+  disabled flag off, and reports its date and the days since. Run it from inside the
+  repository, with full history: a shallow clone only knows the commits it fetched.
+- `--now` replaces the current time, so a scheduled run or a test gets the same
+  answer every day. It takes a date (`2026-10-29`) or an ISO 8601 time.
+- `--config` names the file to read the `lint` block from. Without it the
+  `missing-owner` rule is off.
+- Parse issues are printed to stderr; the findings cover what parsed.
+- `--format github` prints `::error` for an expired flag and `::warning` for the
+  rest, on the line of the flag.
+
+## `refs`
+
+```sh
+kurenwimpel refs flags.json --src src [--src lib] [--format text|json|markdown|github]
+```
+
+Scans JavaScript and TypeScript sources (`.ts`, `.tsx`, `.mts`, `.cts`, `.js`,
+`.jsx`, `.mjs`, `.cjs`, `.vue`, `.svelte`) for flag keys passed to the client
+getters: `getBoolean`, `getString`, `getNumber`, `getObject`, their `Details`
+forms, the OpenFeature `get*Value` and `get*Details` forms, and `evaluate`. It
+reports the flags no getter reads and the keys getters read that the ruleset does
+not define.
+
+Only a string literal key is seen. A key held in a variable or built at run time
+is invisible, so a flag reported as unreferenced may still be read: search for it
+before removing it. `node_modules` and directories starting with `.` are skipped.
 
 ## `publish`
 
@@ -167,7 +218,8 @@ git diff --name-only -z origin/main...HEAD | xargs -0 kurenwimpel envs --changed
 ## Configuration
 
 `publish`, `rollback`, `revisions` and `envs` read `kurenwimpel.config.json` from
-the working directory, or the file `--config` names. It maps each environment to the
+the working directory, or the file `--config` names. `lint` reads only the file
+`--config` names. It maps each environment to the
 target it publishes to, and optionally to its ruleset and approvers:
 
 ```json
@@ -216,6 +268,16 @@ Each target type takes these fields:
 
 Unknown fields are rejected, so a typo fails instead of falling back to a default.
 
+The top-level `lint` block configures `kurenwimpel lint`:
+
+```json
+{ "lint": { "requireOwner": true }, "environments": {} }
+```
+
+`requireOwner` turns on the `missing-owner` warning. It sits at the top level
+rather than per environment because a flag keeps its owner in every environment it
+is defined in.
+
 ### Credentials
 
 Credentials come from environment variables only. A field that would put a secret
@@ -239,11 +301,11 @@ A missing variable fails the command with exit code 2 before anything is written
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `publish` published or found nothing to write; `rollback`, `revisions` and `envs` ran.                             |
-| `1`  | Findings. `validate` found an issue in some file; `diff --exit-code` found a change; `eval` returned an error code for some flag; `publish` refused a ruleset with parse issues.                                                                       |
-| `2`  | The command could not run: unknown command or option, wrong number of files, an unreadable file, an input that is not JSON, an invalid config, a missing credential, a payload over the size limit, a target that failed, no revision to roll back to. |
+| Code | Meaning                                                                                                                                                                                                                                                     |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `lint` and `refs` found nothing; `publish` published or found nothing to write; `rollback`, `revisions` and `envs` ran. |
+| `1`  | Findings. `validate` found an issue in some file; `diff --exit-code` found a change; `eval` returned an error code for some flag; `lint` has a finding; `refs` found an unreferenced flag or an unknown key; `publish` refused a ruleset with parse issues. |
+| `2`  | The command could not run: unknown command or option, wrong number of files, an unreadable file, an input that is not JSON, an invalid config, a missing credential, a payload over the size limit, a target that failed, no revision to roll back to.      |
 
 ## JSON output
 
@@ -358,6 +420,34 @@ Each result is the core's `EvaluationResult` (`ruleId`, `failedPrerequisite`,
 prerequisite's `status` is `satisfied`, `failed`, `missing` (not in the ruleset),
 or `not-evaluated` (evaluation stopped before reaching it).
 
+`lint`:
+
+```json
+{
+  "file": "flags/production.json",
+  "now": "2026-10-29T00:00:00.000Z",
+  "findings": [
+    {
+      "flag": "old-banner",
+      "rule": "permanently-off",
+      "severity": "warning",
+      "offSince": "2026-03-01T10:00:00+00:00",
+      "offDays": 241,
+      "message": "has been switched off since 2026-03-01 (241 days); remove it and its code path, or switch it on"
+    }
+  ],
+  "issues": []
+}
+```
+
+A finding carries `variant` for `fully-rolled-out`, `expiresOn` for `expired`, and
+`offSince` and `offDays` for `permanently-off` under `--since-git`.
+
+`refs` prints `{ "file", "sources", "flags", "files", "references", "unreferenced", "unknown" }`.
+`flags` and `files` are counts, `references` lists every getter call found as
+`{ "key", "file", "line" }`, `unreferenced` the keys of flags nothing reads, and
+`unknown` the calls naming a key the ruleset does not define.
+
 `publish`:
 
 ```json
@@ -387,7 +477,7 @@ config order, with `approvers` empty when the config names none.
 ## Programmatic use
 
 The package also exports what the commands are built from: `diffRuleset`,
-`explain`, `loadRuleset`, the renderers, and `run(argv, io)`, which runs one
+`explain`, `loadRuleset`, `lintFlags`, `findReferences`, the renderers, and `run(argv, io)`, which runs one
 invocation against an injected `CliIo` and returns its exit code.
 
 The publisher is usable without the command:

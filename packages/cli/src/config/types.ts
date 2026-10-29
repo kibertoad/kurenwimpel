@@ -5,6 +5,16 @@
  */
 export interface KurenwimpelConfig {
   readonly environments: Readonly<Record<string, EnvironmentConfig>>;
+  readonly lint?: LintConfig;
+}
+
+/**
+ * Settings for `kurenwimpel lint`. Top level rather than per environment: a flag
+ * keeps its owner across every environment it is defined in.
+ */
+export interface LintConfig {
+  /** Report flags without `lifecycle.owner`, as warnings. Defaults to false. */
+  readonly requireOwner?: boolean;
 }
 
 export interface EnvironmentConfig {

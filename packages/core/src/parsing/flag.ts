@@ -19,6 +19,7 @@ import type {
 } from '../model/flag.js';
 import type { FlagValue } from '../model/json.js';
 import { parseCondition } from './condition.js';
+import { parseLifecycle } from './lifecycle.js';
 import {
   cloneJson,
   fail,
@@ -71,6 +72,7 @@ export function parseFlagDefinition(raw: unknown, warnings?: FlagParseIssue[]): 
   const rules = parseRules(raw['rules'], key, variantNames, warnings);
   const rollout = parseRollout(raw['rollout'], `flag ${key}`, variantNames);
   const metadata = parseMetadata(raw['metadata'], key);
+  const lifecycle = parseLifecycle(raw['lifecycle'], key, warnings);
 
   const salt = optionalString(raw['salt'], `flag ${key}: salt`);
   const version = tolerantVersion(raw['version'], key, warnings);
@@ -87,6 +89,7 @@ export function parseFlagDefinition(raw: unknown, warnings?: FlagParseIssue[]): 
     ...(rules === undefined ? {} : { rules }),
     ...(rollout === undefined ? {} : { rollout }),
     ...(metadata === undefined ? {} : { metadata }),
+    ...(lifecycle === undefined ? {} : { lifecycle }),
     ...(salt === undefined ? {} : { salt }),
     ...(version === undefined ? {} : { version }),
   };

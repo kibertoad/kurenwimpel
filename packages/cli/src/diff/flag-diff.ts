@@ -21,6 +21,7 @@ export function diffFlag(before: FlagDefinition, after: FlagDefinition): Change[
     ...diffRules(before.rules ?? [], after.rules ?? []),
     ...diffRollout('rollout', before.rollout, after.rollout),
     ...valueChange('metadata', before.metadata, after.metadata),
+    ...valueChange('lifecycle', before.lifecycle, after.lifecycle),
   ];
 }
 
@@ -44,6 +45,7 @@ const VALUE_KINDS = {
   offVariant: 'off-variant-changed',
   prerequisites: 'prerequisites-changed',
   metadata: 'metadata-changed',
+  lifecycle: 'lifecycle-changed',
 } as const;
 
 function valueChange(field: keyof typeof VALUE_KINDS, before: unknown, after: unknown): Change[] {

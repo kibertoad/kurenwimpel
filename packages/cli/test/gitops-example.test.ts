@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { parseConfig, revisionOf, run } from '../src/index.js';
+import { listFiles, parseConfig, revisionOf, run } from '../src/index.js';
 import type { CliIo, EnvsReport, PublishReport } from '../src/index.js';
 import { ExitCode } from './fixtures.js';
 import type { CliOutcome, TestRuleset } from './fixtures.js';
@@ -44,6 +44,8 @@ async function cli(...argv: string[]): Promise<CliOutcome> {
     env: {},
     fetch: () => Promise.reject(new Error('no network in tests')),
     now: () => new Date(Date.UTC(2026, 0, 1, 0, minutes++)),
+    git: () => Promise.reject(new Error('no git in tests')),
+    listFiles,
   };
   const code = await run(argv, io);
   return { code, stdout, stderr };
@@ -151,6 +153,30 @@ describe('the gitops example', () => {
 
     expect(stdout).toContain('1 flag and 0 segments differ. 1 change reshuffles subjects.');
     expect(stdout).toContain('| **rollout-reshuffled** | `rules[recent-app].rollout` |');
+  });
+
+  it('lints each environment into its comment section', async () => {
+    const clean = await cli('lint', 'flags/production.json', '-c', CONFIG, '-f', 'markdown');
+    expect(clean.code).toBe(ExitCode.Ok);
+    expect(clean.stdout).toBe('### Lint\n\n`flags/production.json`: no findings (2 flags).\n');
+
+    const ruleset = await exampleRuleset('staging');
+    ruleset.flags[0]!.enabled = false;
+    delete ruleset.flags[1]!.lifecycle;
+    await write('flags/staging.json', ruleset);
+
+    const { code, stdout } = await cli(
+      'lint',
+      'flags/staging.json',
+      '-c',
+      CONFIG,
+      '-f',
+      'markdown',
+    );
+    expect(code).toBe(ExitCode.Findings);
+    expect(stdout).toContain('- **permanently-off**: `new-checkout` is switched off');
+    expect(stdout).toContain('- **fully-rolled-out**: `new-backend` serves "on"');
+    expect(stdout).toContain('- **missing-owner**: `new-backend` has no lifecycle.owner');
   });
 
   it('publishes each environment, then rolls one back', async () => {

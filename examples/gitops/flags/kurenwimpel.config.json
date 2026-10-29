@@ -1,4 +1,5 @@
 {
+  "lint": { "requireOwner": true },
   "environments": {
     "production": {
       "ruleset": "production.json",

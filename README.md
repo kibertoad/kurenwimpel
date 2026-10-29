@@ -27,13 +27,13 @@ applies to the request, user or tenant in front of it.
 
 ## Layout
 
-| Package                   | Directory             | What it is                                                       |
-| ------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
-| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff, explain and publish.  |
-| `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
-| `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
-| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
+| Package                   | Directory             | What it is                                                            |
+| ------------------------- | --------------------- | --------------------------------------------------------------------- |
+| `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals.      |
+| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff, lint, explain and publish. |
+| `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.           |
+| `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.                |
+| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.       |
 
 Both wrappers re-export the core, so a service only ever imports one package.
 `@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
@@ -217,6 +217,7 @@ worth relying on:
   "defaultVariant": "off",
   "offVariant": "off",
   "metadata": { "experiment": "checkout-q3" },
+  "lifecycle": { "owner": "team-checkout", "kind": "experiment", "expiresOn": "2027-03-31" },
   "prerequisites": [{ "flag": "new-backend", "variants": ["on"] }],
   "targets": [{ "variant": "on", "keys": ["qa-account-1"] }],
   "allocation": { "percent": 20 },
@@ -237,6 +238,14 @@ worth relying on:
   ]
 }
 ```
+
+`lifecycle` records who owns a flag and when it should be gone: `owner`, `kind`
+(`release`, `experiment`, `ops` or `permission`), `expiresOn` as `YYYY-MM-DD`, and
+`tags`. Evaluation ignores it, and it is kept apart from `metadata`, which is sent to
+clients, so team names never go over the wire. `kurenwimpel lint` reads it to find
+flags due for removal; `ops` and `permission` flags are long-lived by design and
+exempt. A bad value is reported as a parse issue and that one field is dropped,
+while the flag goes on being served.
 
 A ruleset payload is an array of flags, a key-to-definition object, or the
 document form `{ "flags": [...], "segments": [...] }` once segments are in play.
@@ -340,7 +349,7 @@ The control plane is a Git repository. [`examples/gitops`](examples/gitops/READM
 is a template for one: a `flags/` directory with one complete ruleset per
 environment, a `kurenwimpel.config.json` mapping each environment to its publish
 target and its approvers, a CODEOWNERS file, and a GitHub Actions workflow that
-ties `validate`, `diff` and `publish` together. CI in this repository runs the
+ties `validate`, `diff`, `lint` and `publish` together. CI in this repository runs the
 template's commands against file targets, so it keeps working as the CLI changes.
 
 End to end:
@@ -349,7 +358,8 @@ End to end:
 2. The workflow validates every environment the change touches. Each issue shows
    as an annotation on the line of the broken flag, and fails the check.
 3. A sticky comment shows what the change does to live traffic, environment by
-   environment, and says so when it reshuffles a rollout.
+   environment, and says so when it reshuffles a rollout. It also lists the flags
+   `kurenwimpel lint` finds due for removal.
 4. CODEOWNERS requests a review from the environment's approvers, and branch
    protection requires it.
 5. On merge, a job bound to the GitHub environment `staging` publishes the new

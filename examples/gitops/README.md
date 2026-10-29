@@ -6,13 +6,13 @@ of its own, or merge it into an existing one.
 
 ```text
 flags/
-  kurenwimpel.config.json   environments, their targets, rulesets and approvers
+  kurenwimpel.config.json   environments, their targets, rulesets and approvers, lint settings
   production.json           one complete ruleset per environment
   staging.json
   development.json
 .github/
   CODEOWNERS                who approves a change to each environment
-  workflows/flags.yml       validate and diff on pull requests, publish on merge
+  workflows/flags.yml       validate, diff and lint on pull requests, publish on merge
   workflows/flags-rollback.yml
   actions/setup-kurenwimpel installs Node.js and the CLI
 ```
@@ -61,7 +61,13 @@ On a pull request, the `validate and diff` job:
   `kurenwimpel diff --format markdown` against the base branch. A change that
   reshuffles a rollout or rebuckets subjects is called out in the diff's headline
   and in bold in its table. Pull requests from forks get the annotations and the
-  job summary but no comment, since their token cannot write one.
+  job summary but no comment, since their token cannot write one;
+- runs `kurenwimpel lint --since-git` on each changed ruleset and adds its findings
+  to the comment and as annotations: flags past their `lifecycle.expiresOn`, flags
+  serving one variant to everyone, flags switched off and for how long, and, since
+  the config sets `lint.requireOwner`, flags without a `lifecycle.owner`. Lint
+  never fails the check. To make it blocking, replace `|| true` after the
+  `--format github` run with `|| failed=true`.
 
 On a push to `main`, the `publish` jobs run `kurenwimpel publish` once per changed
 environment, each bound to the GitHub environment of the same name, so its
@@ -81,6 +87,6 @@ touching that environment publishes it again.
 
 The comment is assembled from Markdown files under `$RUNNER_TEMP/comment/<env>/`,
 concatenated in file name order under one heading per environment. The workflow
-writes `10-validate.md` and `20-diff.md`. Another check adds its own section by
-writing one more file in the same step loop, for example
-`$RUNNER_TEMP/comment/$environment/30-lint.md`.
+writes `10-validate.md`, `20-diff.md` and `30-lint.md`. Another check adds its own
+section by writing one more file in the same step loop, for example
+`$RUNNER_TEMP/comment/$environment/40-refs.md`.

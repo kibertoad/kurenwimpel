@@ -28,6 +28,19 @@ describe('parseConfig', () => {
     expect(config.environments['edge']?.target).toMatchObject({ accessKeyIdEnv: 'R2_PROD_ID' });
   });
 
+  it('reads the lint block', () => {
+    expect(parseConfig({ environments: {}, lint: { requireOwner: true } }, 'k.json').lint).toEqual({
+      requireOwner: true,
+    });
+    expect(parseConfig({ environments: {}, lint: {} }, 'k.json').lint).toEqual({});
+    expect(parse({ environments: {}, lint: { requireOwner: 'yes' } })).toThrow(
+      'k.json: lint.requireOwner must be a boolean',
+    );
+    expect(parse({ environments: {}, lint: { owners: true } })).toThrow(
+      'k.json: lint.owners is not a known field (expected requireOwner)',
+    );
+  });
+
   it('rejects a secret with a pointer to the variable field', () => {
     expect(parse(withTarget({ type: 'kv', namespaceId: 'n', apiToken: 'x' }))).toThrow(
       'k.json: environments.prod.target.apiToken: credentials come from environment variables only; name the variable with apiTokenEnv',
