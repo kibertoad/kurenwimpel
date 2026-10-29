@@ -27,16 +27,18 @@ applies to the request, user or tenant in front of it.
 
 ## Layout
 
-| Package                   | Directory             | What it is                                                       |
-| ------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
-| `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
-| `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
-| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
+| Package                    | Directory              | What it is                                                       |
+| -------------------------- | ---------------------- | ---------------------------------------------------------------- |
+| `@kurenwimpel/core`        | `packages/core`        | Runtime-agnostic engine. Zero dependencies, no platform globals. |
+| `@kurenwimpel/cloudflare`  | `packages/cloudflare`  | Workers wrapper: KV-backed provider, isolate-scoped client.      |
+| `@kurenwimpel/node`        | `packages/node`        | Node wrapper: file and HTTP providers, polling client.           |
+| `@kurenwimpel/openfeature` | `packages/openfeature` | OpenFeature server provider wrapping any client.                 |
+| `@kurenwimpel/ofrep`       | `packages/ofrep`       | The OpenFeature remote evaluation protocol, as an API contract.  |
 
 Both wrappers re-export the core, so a service only ever imports one package.
-`@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
-an implementation, and depends on none of them.
+`@kurenwimpel/openfeature` sits on top of either of them for services that code
+against the OpenFeature API. `@kurenwimpel/ofrep` stands apart from the rest: it is
+a specification rather than an implementation, and depends on none of them.
 
 The core's source is grouped by role — `model/` (domain types), `evaluation/`
 (pure decision functions), `parsing/` (validation for untrusted JSON), and
@@ -353,7 +355,11 @@ app.get('/ready', (_request, reply) => {
 ```
 
 `onSnapshotChange(snapshot, previous)` is called whenever a new snapshot replaces
-the served one, with `previous` undefined on the first install.
+the served one, with `previous` undefined on the first install. Code that wraps a
+client it did not construct registers the same hook with
+`client.subscribe({ onSnapshotChange, onLoad })`, where `onLoad(result)` runs once
+per load with `installed`, `unchanged` or `failed`, after `status()` reflects it.
+`subscribe` returns a function that removes the listener.
 
 The `metrics` option takes a sink whose `record(flagKey, variant, reason,
 errorCode)` is called once per evaluation, including each flag of
@@ -503,7 +509,9 @@ fails.
   ruleset. Check `ready` first if a 5xx is not what you want.
 - A throwing `onImpression` hook or `metrics` sink is reported through `onError`
   and never fails the evaluation. A throwing `onSnapshotChange` is reported the
-  same way, and the snapshot is installed regardless.
+  same way, and the snapshot is installed regardless. So is a throwing
+  `subscribe` listener, under the operation `listener`; the other listeners still
+  run.
 
 ## Limits
 
@@ -574,6 +582,10 @@ whole contract: see `packages/node/src/file-provider.ts` for the smallest
 complete example.
 
 ## Speaking OpenFeature
+
+`@kurenwimpel/openfeature` is an OpenFeature server provider over any
+`FeatureFlagClient`, so call sites can use `OpenFeature.getClient()` instead of
+this project's API. See [`packages/openfeature/README.md`](packages/openfeature/README.md).
 
 `@kurenwimpel/ofrep` is the [OpenFeature Remote Evaluation
 Protocol](https://openfeature.dev/docs/reference/other-technologies/ofrep/) written
