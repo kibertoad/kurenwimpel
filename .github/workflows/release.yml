@@ -1,0 +1,121 @@
+name: Release
+
+# With pending changesets on main, opens or updates the "Version packages" PR.
+# Once that PR merges, packs and publishes every unpublished version to npm.
+# Publishing uses npm trusted publishing: the registry accepts this workflow's
+# OIDC token, so no npm token is stored anywhere, and provenance is attached.
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  select-mode:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - id: select-mode
+        uses: changesets/action/select-mode@v2
+
+  version:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'version'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: changesets/action/version@v2
+        with:
+          commit-message: Version packages
+          pr-title: Version packages
+
+  pack:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      - id: pack
+        uses: changesets/action/pack@v2
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: changesets/action/publish@v2
+        with:
+          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+          create-github-releases: true

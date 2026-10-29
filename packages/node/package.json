@@ -3,8 +3,15 @@
   "version": "0.0.0",
   "description": "Node.js service wrapper for kurenwimpel feature flags.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kibertoad/kurenwimpel.git",
+    "directory": "packages/node"
+  },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
   ],
   "type": "module",
   "sideEffects": false,
@@ -13,6 +20,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc --build tsconfig.build.json",
@@ -23,7 +33,7 @@
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@kurenwimpel/core": "workspace:*"
+    "@kurenwimpel/core": "workspace:^"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^10.0.0",

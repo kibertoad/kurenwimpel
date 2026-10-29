@@ -3,8 +3,15 @@
   "version": "0.0.0",
   "description": "OFREP (OpenFeature Remote Evaluation Protocol) API contract, as Standard Schema definitions.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kibertoad/kurenwimpel.git",
+    "directory": "packages/ofrep"
+  },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
   ],
   "type": "module",
   "sideEffects": false,
@@ -13,6 +20,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc --build tsconfig.build.json",
