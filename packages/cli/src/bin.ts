@@ -11,4 +11,7 @@ process.exitCode = await run(process.argv.slice(2), {
     process.stderr.write(text);
   },
   readFile: (path) => readFile(path, 'utf8'),
+  env: process.env,
+  fetch: globalThis.fetch,
+  now: () => new Date(),
 });

@@ -11,11 +11,18 @@ export const ExitCode = {
 
 export type ExitCode = (typeof ExitCode)[keyof typeof ExitCode];
 
-/** Everything a command touches outside its own arguments, so tests can run it in memory. */
+/**
+ * Everything a command touches outside its own arguments, so tests can run it in
+ * memory. The `file` publish target is the exception: it writes to disk directly.
+ */
 export interface CliIo {
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
   readonly readFile: (path: string) => Promise<string>;
+  /** The only source of credentials. */
+  readonly env: Readonly<Record<string, string | undefined>>;
+  readonly fetch: typeof fetch;
+  readonly now: () => Date;
 }
 
 export type OptionValue = string | boolean | (string | boolean)[] | undefined;

@@ -30,7 +30,7 @@ applies to the request, user or tenant in front of it.
 | Package                   | Directory             | What it is                                                       |
 | ------------------------- | --------------------- | ---------------------------------------------------------------- |
 | `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
-| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff and explain rulesets.  |
+| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff, explain and publish.  |
 | `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
 | `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
 | `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
@@ -329,8 +329,10 @@ Only the first request an isolate serves pays for a load. Later requests read th
 in-memory snapshot and hand any refresh to `ctx.waitUntil`, so it never sits on the
 response path.
 
-Stamp `{ revision: string }` as the KV metadata when writing the ruleset — the
-provider uses it to skip re-parsing an unchanged payload.
+`kurenwimpel publish` writes the ruleset in the layout the provider reads, with
+`{ revision: string }` as the KV metadata. The provider uses that revision to skip
+re-parsing an unchanged payload, and `kurenwimpel rollback` repoints it at an
+earlier revision. See the [CLI README](packages/cli/README.md#publish).
 
 ## Failure behaviour
 

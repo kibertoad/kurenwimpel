@@ -6,6 +6,8 @@ import {
   type FlagSnapshot,
 } from '@kurenwimpel/core';
 
+import { DEFAULT_FLAGS_KEY, type KvFlagMetadata } from './kv-layout.js';
+
 export interface KvProviderOptions {
   /** The KV namespace binding holding the ruleset. */
   readonly namespace: KVNamespace;
@@ -22,8 +24,6 @@ export interface KvProviderOptions {
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
 }
 
-export const DEFAULT_FLAGS_KEY = 'flags:current';
-
 /**
  * Loads the ruleset from Workers KV.
  *
@@ -31,8 +31,9 @@ export const DEFAULT_FLAGS_KEY = 'flags:current';
  * snapshot; when that revision is unchanged the provider returns `null` and the
  * client keeps its existing snapshot instead of re-parsing the payload.
  *
- * Writers should stamp `{ revision: string }` as the KV metadata. Without it
- * every load produces a fresh snapshot, which is correct, just less efficient.
+ * Writers should stamp `{ revision: string }` as the KV metadata, as
+ * `kurenwimpel publish` does (see `kv-layout.ts`). Without it every load
+ * produces a fresh snapshot, which is correct, just less efficient.
  */
 export class KvFlagProvider implements FlagProvider {
   readonly name = 'cloudflare-kv';
@@ -70,8 +71,4 @@ export class KvFlagProvider implements FlagProvider {
 
     return createSnapshot(flags, revision === undefined ? {} : { version: revision }, segments);
   }
-}
-
-export interface KvFlagMetadata {
-  readonly revision?: string;
 }

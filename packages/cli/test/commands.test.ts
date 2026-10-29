@@ -14,9 +14,9 @@ describe('kurenwimpel', () => {
 
   it('exits 2 with no command or an unknown one', async () => {
     expect((await runCli([])).code).toBe(ExitCode.Usage);
-    const unknown = await runCli(['publish']);
+    const unknown = await runCli(['deploy']);
     expect(unknown.code).toBe(ExitCode.Usage);
-    expect(unknown.stderr).toContain('Unknown command "publish"');
+    expect(unknown.stderr).toContain('Unknown command "deploy"');
   });
 
   it('prints one command help', async () => {
