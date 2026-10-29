@@ -27,3 +27,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm run check
+
+      # Lints each package as `pnpm pack` produces it, so a broken `exports` map
+      # or a missing file fails here instead of in a consumer's install.
+      - run: pnpm run pack:check

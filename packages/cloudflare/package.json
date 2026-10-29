@@ -3,17 +3,27 @@
   "version": "0.0.0",
   "description": "Cloudflare Workers service wrapper for kurenwimpel feature flags.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kibertoad/kurenwimpel.git",
+    "directory": "packages/cloudflare"
+  },
   "files": [
-    "dist"
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
   ],
   "type": "module",
   "sideEffects": false,
   "exports": {
     ".": {
-      "workerd": "./dist/index.js",
       "types": "./dist/index.d.ts",
+      "workerd": "./dist/index.js",
       "default": "./dist/index.js"
     }
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "build": "tsc --build tsconfig.build.json",
@@ -24,12 +34,15 @@
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@kurenwimpel/core": "workspace:*"
+    "@kurenwimpel/core": "workspace:^"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
     "wrangler": "^4.125.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

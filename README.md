@@ -55,6 +55,7 @@ pnpm run check       # format:check + lint + typecheck + test
 pnpm run build
 pnpm run format      # rewrite with oxfmt
 pnpm run lint:fix
+pnpm run pack:check  # publint + attw against each packed tarball
 ```
 
 `pnpm run lint` is type-aware and therefore slower; `pnpm run lint:quick` runs the
@@ -102,6 +103,33 @@ changed — with one caveat: a _static_ mutant (one in a top-level initialiser)
 keeps its old verdict even when a new test targets it, so delete the incremental
 file when the score itself is the point. The Cloudflare package is not mutated:
 its tests run inside workerd, which Stryker's vitest runner cannot drive.
+
+### Releasing
+
+Versions and changelogs are managed with [Changesets](https://changesets.dev). A PR
+that changes what a published package does carries a changeset describing it:
+
+```sh
+pnpm changeset   # pick the packages and the bump, then write the changelog entry
+```
+
+This writes a Markdown file under `.changeset/`, committed with the PR. Internal
+changes (tests, CI, docs) need none.
+
+On `main`, `.github/workflows/release.yml` collects pending changesets into a
+"Version packages" PR that bumps versions and writes each `CHANGELOG.md`. Merging
+that PR publishes every bumped package to npm through
+[trusted publishing](https://docs.npmjs.com/trusted-publishers): the registry
+accepts the workflow's OIDC token, so the repository holds no npm token, and each
+release carries a provenance attestation.
+
+Internal dependencies are declared as `workspace:^`, which `pnpm publish` rewrites
+to a caret range on the current version. While the packages are below 1.0, a minor
+bump of `@kurenwimpel/core` therefore also releases the packages that depend on it.
+
+A new package can't be published by the workflow until it exists on npm. Publish
+its first version by hand, then add `kibertoad/kurenwimpel`, workflow
+`release.yml` and environment `npm` as its trusted publisher on npmjs.com.
 
 ## Concepts
 
