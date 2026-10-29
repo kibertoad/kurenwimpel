@@ -25,9 +25,15 @@ export interface KvProviderOptions {
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
   /** Where to keep the last ruleset that loaded, to boot from when KV is unreachable. */
   readonly lastKnownGood?: LastKnownGoodStore;
+  /**
+   * How long a KV read may take before the load fails. KV's `get` takes no
+   * `AbortSignal`, so a timed-out read is abandoned rather than cancelled.
+   */
+  readonly timeoutMs?: number;
 }
 
 export const DEFAULT_FLAGS_KEY = 'flags:current';
+export const DEFAULT_KV_TIMEOUT_MS = 1000;
 
 /**
  * Loads the ruleset from Workers KV.
@@ -47,6 +53,7 @@ export class KvFlagProvider implements FlagProvider {
   readonly #cacheTtl: number | undefined;
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
   readonly #lastKnownGood: LastKnownGoodStore | undefined;
+  readonly #timeoutMs: number;
 
   constructor(options: KvProviderOptions) {
     this.#namespace = options.namespace;
@@ -54,6 +61,7 @@ export class KvFlagProvider implements FlagProvider {
     this.#cacheTtl = options.cacheTtlSeconds;
     this.#onParseIssues = options.onParseIssues;
     this.#lastKnownGood = options.lastKnownGood;
+    this.#timeoutMs = options.timeoutMs ?? DEFAULT_KV_TIMEOUT_MS;
   }
 
   load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
@@ -69,12 +77,14 @@ export class KvFlagProvider implements FlagProvider {
     previous: FlagSnapshot | undefined,
     source: RulesetSourceOptions,
   ): Promise<FlagSnapshot | null> {
-    const { value, metadata } = await this.#namespace.getWithMetadata<unknown, KvFlagMetadata>(
-      this.#key,
-      {
-        type: 'json',
-        ...(this.#cacheTtl === undefined ? {} : { cacheTtl: this.#cacheTtl }),
-      },
+    const read = this.#namespace.getWithMetadata<unknown, KvFlagMetadata>(this.#key, {
+      type: 'json',
+      ...(this.#cacheTtl === undefined ? {} : { cacheTtl: this.#cacheTtl }),
+    });
+    const { value, metadata } = await withTimeout(
+      read,
+      this.#timeoutMs,
+      `KV read of "${this.#key}" did not finish within ${this.#timeoutMs}ms`,
     );
 
     if (value === null) {
@@ -90,4 +100,18 @@ export class KvFlagProvider implements FlagProvider {
 
 export interface KvFlagMetadata {
   readonly revision?: string;
+}
+
+async function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(message));
+    }, ms);
+  });
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

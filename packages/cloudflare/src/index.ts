@@ -6,10 +6,14 @@
  * `@kurenwimpel/core`, which this package re-exports for convenience.
  */
 
-export { DEFAULT_FLAGS_KEY, KvFlagProvider } from './kv-provider.js';
+export { DEFAULT_FLAGS_KEY, DEFAULT_KV_TIMEOUT_MS, KvFlagProvider } from './kv-provider.js';
 export type { KvFlagMetadata, KvProviderOptions } from './kv-provider.js';
 
-export { DEFAULT_REFRESH_INTERVAL_MS, WorkerFlags } from './worker-flags.js';
-export type { WorkerFlagsOptions } from './worker-flags.js';
+export {
+  DEFAULT_REFRESH_INTERVAL_MS,
+  DEFAULT_RETRY_AFTER_MS,
+  WorkerFlags,
+} from './worker-flags.js';
+export type { InitFailureMode, WorkerFlagsOptions } from './worker-flags.js';
 
 export * from '@kurenwimpel/core';
