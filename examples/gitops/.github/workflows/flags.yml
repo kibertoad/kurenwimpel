@@ -1,7 +1,8 @@
 name: Flags
 
 # Pull requests: validate every changed environment, annotate its issues inline,
-# and keep one sticky comment with each environment's diff against the base.
+# and keep one sticky comment with each environment's diff against the base and
+# the flags lint says are due for removal.
 # Pushes to main: publish every changed environment from a job bound to the
 # GitHub environment of the same name, so its protection rules and secrets apply.
 on:
@@ -73,7 +74,9 @@ jobs:
 
       # Each environment gets a directory of Markdown sections, concatenated in name
       # order into the comment. Another check adds a section by writing one more file.
-      - name: Validate and diff each changed environment
+      # Lint findings are annotated and listed in the comment but do not fail the
+      # check: a flag going stale is not a reason to block an unrelated change.
+      - name: Validate, diff and lint each changed environment
         id: check
         if: steps.changed.outputs.count != '0'
         env:
@@ -91,6 +94,11 @@ jobs:
             git show "$BASE_REF:$ruleset" > "$base" 2> /dev/null || echo '[]' > "$base"
             kurenwimpel diff "$base" "$ruleset" --format markdown > "$sections/20-diff.md" \
               || echo '_No diff: the ruleset is not valid JSON._' > "$sections/20-diff.md"
+
+            lint=(kurenwimpel lint "$ruleset" --config "$CONFIG" --since-git)
+            "${lint[@]}" --format github || true
+            "${lint[@]}" --format markdown > "$sections/30-lint.md" \
+              || [ $? -eq 1 ] || echo '_No lint: the ruleset is not valid JSON._' > "$sections/30-lint.md"
           done < <(jq -r '.environments[] | [.name, .ruleset] | @tsv' "$RUNNER_TEMP/environments.json")
           echo "failed=$failed" >> "$GITHUB_OUTPUT"
 

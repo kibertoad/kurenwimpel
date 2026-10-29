@@ -9,6 +9,7 @@ export const README_FLAG = {
   defaultVariant: 'off',
   offVariant: 'off',
   metadata: { experiment: 'checkout-q3' },
+  lifecycle: { owner: 'team-checkout', kind: 'experiment', expiresOn: '2027-03-31' },
   prerequisites: [{ flag: 'new-backend', variants: ['on'] }],
   targets: [{ variant: 'on', keys: ['qa-account-1'] }],
   allocation: { percent: 20 },

@@ -216,13 +216,14 @@ describe('diff, the rest of a definition', () => {
     ]);
   });
 
-  it('reports variants, default and off variant, prerequisites and metadata', () => {
+  it('reports variants, default and off variant, prerequisites, metadata and lifecycle', () => {
     const changes = changesAfter((flag) => {
       flag.variants = { on: true, off: false, dark: true };
       flag.defaultVariant = 'on';
       flag.offVariant = 'dark';
       flag.prerequisites = [];
       flag.metadata = { experiment: 'checkout-q4' };
+      flag.lifecycle = { owner: 'team-payments' };
     });
     expect(kinds(changes)).toEqual([
       'variants-changed',
@@ -230,6 +231,7 @@ describe('diff, the rest of a definition', () => {
       'off-variant-changed',
       'prerequisites-changed',
       'metadata-changed',
+      'lifecycle-changed',
     ]);
     expect(changes[0]).toMatchObject({ added: 1, removed: 0, changed: 0 });
   });

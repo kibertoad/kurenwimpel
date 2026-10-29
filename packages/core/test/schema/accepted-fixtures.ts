@@ -64,6 +64,13 @@ const everyField = {
     { variant: 'off', weight: 0 },
   ],
   metadata: { experiment: 'q3', owner: 'growth', weight: 2, live: true },
+  lifecycle: {
+    owner: 'team-checkout',
+    kind: 'release',
+    expiresOn: '2027-01-31',
+    tags: ['checkout'],
+    ticket: 'a field this version does not read',
+  },
   salt: 'reshuffled',
   version: 7,
   description: 'a field this version does not read',
@@ -79,6 +86,12 @@ const nullOptionals = {
   metadata: null,
   salt: null,
   version: null,
+  lifecycle: null,
+};
+
+const nullLifecycleFields = {
+  ...flag,
+  lifecycle: { owner: null, kind: null, expiresOn: null, tags: null },
 };
 
 /** Documents `parseRuleset` reads with no issues; each must validate. */
@@ -104,6 +117,14 @@ export const accepted: Record<string, unknown> = {
   'every operator': { flags: [everyOperator], segments: [segment] },
   'every optional flag field': [flag, everyField],
   'explicit nulls for optional fields': [nullOptionals],
+  'explicit nulls inside lifecycle': [nullLifecycleFields],
+  'every lifecycle kind': [
+    { ...flag, key: 'a', lifecycle: { kind: 'release' } },
+    { ...flag, key: 'b', lifecycle: { kind: 'experiment' } },
+    { ...flag, key: 'c', lifecycle: { kind: 'ops' } },
+    { ...flag, key: 'd', lifecycle: { kind: 'permission' } },
+  ],
+  'a leap day expiry': [{ ...flag, lifecycle: { expiresOn: '2028-02-29' } }],
   'segments of every kind': {
     flags: [],
     segments: [

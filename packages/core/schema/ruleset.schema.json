@@ -139,6 +139,39 @@
         "version": {
           "description": "An analytics label carried on impressions.",
           "type": ["number", "null"]
+        },
+        "lifecycle": {
+          "description": "Ownership and expiry, read by kurenwimpel lint. Evaluation ignores it and it is never sent to clients.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/lifecycle" }]
+        }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "properties": {
+        "owner": {
+          "description": "The team or person responsible for removing the flag.",
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/nonEmptyString" }]
+        },
+        "kind": {
+          "description": "ops and permission flags are long-lived by design and exempt from the staleness checks.",
+          "anyOf": [{ "type": "null" }, { "enum": ["release", "experiment", "ops", "permission"] }]
+        },
+        "expiresOn": {
+          "description": "The date the flag should be gone by, YYYY-MM-DD.",
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"
+            }
+          ]
+        },
+        "tags": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/nonEmptyString" } }
+          ]
         }
       }
     },

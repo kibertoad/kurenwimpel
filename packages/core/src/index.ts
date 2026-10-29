@@ -17,6 +17,8 @@ export type {
   Condition,
   ConditionOperator,
   FlagDefinition,
+  FlagKind,
+  FlagLifecycle,
   FlagMetadata,
   Prerequisite,
   Rollout,
@@ -66,6 +68,7 @@ export type { ParsedVersion } from './evaluation/semver.js';
 // parsing
 export { parseCondition } from './parsing/condition.js';
 export { parseFlagDefinition } from './parsing/flag.js';
+export { FLAG_KINDS } from './parsing/lifecycle.js';
 export { FlagParseError } from './parsing/primitives.js';
 export type { FlagParseIssue, ParseFailureScope } from './parsing/primitives.js';
 export { parseFlagDefinitions, parseRuleset, parseSegmentDefinitions } from './parsing/ruleset.js';

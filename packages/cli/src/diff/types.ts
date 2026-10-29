@@ -21,6 +21,7 @@ export type ChangeKind =
   | 'off-variant-changed'
   | 'prerequisites-changed'
   | 'metadata-changed'
+  | 'lifecycle-changed'
   | 'included-changed'
   | 'excluded-changed'
   | 'segment-rules-changed';

@@ -55,13 +55,14 @@ export function renderValidateGithub(files: readonly ValidatedText[]): string {
   const lines: string[] = [];
   for (const file of files) {
     for (const issue of file.issues) {
-      const line = lineOf(file.text, issue);
-      const properties = [
-        `file=${property(file.path.replaceAll('\\', '/'))}`,
-        ...(line === undefined ? [] : [`line=${line}`]),
-        `title=${property(`kurenwimpel: ${issue.at}`)}`,
-      ];
-      lines.push(`::error ${properties.join(',')}::${data(issue.message)}`);
+      lines.push(
+        workflowCommand('error', {
+          file: file.path,
+          line: lineOf(file.text, issue),
+          title: `kurenwimpel: ${issue.at}`,
+          message: issue.message,
+        }),
+      );
     }
   }
   return lines.map((line) => `${line}\n`).join('');
@@ -88,6 +89,23 @@ export function lineOf(text: string, issue: FlagParseIssue): number | undefined 
 
 function escapeRegExp(text: string): string {
   return text.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
+}
+
+export interface Annotation {
+  readonly file: string;
+  readonly line: number | undefined;
+  readonly title: string;
+  readonly message: string;
+}
+
+/** One `::error` or `::warning` workflow command, without its newline. */
+export function workflowCommand(level: 'error' | 'warning', annotation: Annotation): string {
+  const properties = [
+    `file=${property(annotation.file.replaceAll('\\', '/'))}`,
+    ...(annotation.line === undefined ? [] : [`line=${annotation.line}`]),
+    `title=${property(annotation.title)}`,
+  ];
+  return `::${level} ${properties.join(',')}::${data(annotation.message)}`;
 }
 
 /** Escaping from the workflow command reference. */

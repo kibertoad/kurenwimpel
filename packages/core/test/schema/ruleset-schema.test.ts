@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseRuleset, SUPPORTED_SCHEMA_VERSION } from '../../src/index.js';
+import { FLAG_KINDS, parseRuleset, SUPPORTED_SCHEMA_VERSION } from '../../src/index.js';
 import { accepted, conditionByOperator } from './accepted-fixtures.js';
 import { rejected } from './rejected-fixtures.js';
 import { schema, schemaErrors } from './validate.js';
@@ -19,6 +19,11 @@ describe('ruleset.schema.json', () => {
   it('lists exactly the operators the engine knows', () => {
     const operators = schema.$defs.condition.properties.operator.enum;
     expect(operators.toSorted()).toEqual(Object.keys(conditionByOperator).toSorted());
+  });
+
+  it('lists exactly the lifecycle kinds the parser knows', () => {
+    const kinds = schema.$defs.lifecycle.properties.kind.anyOf[1]?.enum;
+    expect(kinds).toEqual(FLAG_KINDS);
   });
 
   it('caps schemaVersion at the version this engine supports', () => {

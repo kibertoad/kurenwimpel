@@ -13,7 +13,7 @@ import {
   requiredString,
 } from './fields.js';
 import type { Fields } from './fields.js';
-import type { EnvironmentConfig, KurenwimpelConfig, TargetConfig } from './types.js';
+import type { EnvironmentConfig, KurenwimpelConfig, LintConfig, TargetConfig } from './types.js';
 
 export interface LoadedConfig {
   readonly path: string;
@@ -28,7 +28,7 @@ export async function loadConfig(io: CliIo, path: string): Promise<LoadedConfig>
 /** Validates a parsed config document. Every problem is a {@link ConfigError}. */
 export function parseConfig(raw: unknown, source: string): KurenwimpelConfig {
   const root = objectAt(raw, source);
-  onlyFields(root, ['$schema', 'environments'], source);
+  onlyFields(root, ['$schema', 'environments', 'lint'], source);
 
   const environments = objectAt(root['environments'], `${source}: environments`);
   const parsed: Record<string, EnvironmentConfig> = {};
@@ -36,7 +36,18 @@ export function parseConfig(raw: unknown, source: string): KurenwimpelConfig {
     const at = `${source}: environments.${name}`;
     parsed[name] = parseEnvironment(objectAt(value, at), at);
   }
-  return { environments: parsed };
+  const lint = root['lint'] === undefined ? undefined : parseLint(root['lint'], `${source}: lint`);
+  return { environments: parsed, ...(lint === undefined ? {} : { lint }) };
+}
+
+function parseLint(value: unknown, at: string): LintConfig {
+  const fields = objectAt(value, at);
+  onlyFields(fields, ['requireOwner'], at);
+  const requireOwner = fields['requireOwner'];
+  if (requireOwner === undefined) return {};
+  if (typeof requireOwner !== 'boolean')
+    throw new ConfigError(`${at}.requireOwner must be a boolean`);
+  return { requireOwner };
 }
 
 function parseEnvironment(fields: Fields, at: string): EnvironmentConfig {

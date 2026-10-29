@@ -2,6 +2,7 @@
 import { readFile } from 'node:fs/promises';
 
 import { run } from './cli.js';
+import { listFiles, runGit } from './system.js';
 
 process.exitCode = await run(process.argv.slice(2), {
   stdout: (text) => {
@@ -14,4 +15,6 @@ process.exitCode = await run(process.argv.slice(2), {
   env: process.env,
   fetch: globalThis.fetch,
   now: () => new Date(),
+  git: runGit,
+  listFiles,
 });

@@ -23,6 +23,10 @@ export interface CliIo {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly fetch: typeof fetch;
   readonly now: () => Date;
+  /** Runs git in the working directory and resolves with its stdout. Used by `lint --since-git`. */
+  readonly git: (args: readonly string[]) => Promise<string>;
+  /** Every file under `directory`, recursively, skipping `node_modules` and dot directories. */
+  readonly listFiles: (directory: string) => Promise<string[]>;
 }
 
 export type OptionValue = string | boolean | (string | boolean)[] | undefined;

@@ -13,6 +13,14 @@ export type { PublishReport } from './commands/publish.js';
 export type { RevisionsReport, RollbackReport } from './commands/rollback.js';
 export type { EvalReport } from './commands/eval.js';
 export type { ValidatedFile, ValidateReport } from './commands/validate.js';
+export type { LintReport } from './commands/lint.js';
+export type { RefsReport } from './commands/refs.js';
+export { lintFlags, servedVariants } from './lint/rules.js';
+export type { LintFinding, LintOptions, LintRule, LintSeverity } from './lint/rules.js';
+export { switchedOffSince } from './lint/since-git.js';
+export { findReferences, isSourceFile, SOURCE_EXTENSIONS } from './refs/scan.js';
+export type { FlagReference } from './refs/scan.js';
+export { listFiles, runGit } from './system.js';
 export { diffRuleset } from './diff/ruleset-diff.js';
 export type { RulesetSide } from './diff/ruleset-diff.js';
 export type {
@@ -48,6 +56,7 @@ export type {
   FileTargetConfig,
   KurenwimpelConfig,
   KvTargetConfig,
+  LintConfig,
   ObjectTargetConfig,
   TargetConfig,
 } from './config/types.js';
