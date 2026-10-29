@@ -15,7 +15,6 @@ import type {
   RolloutBucket,
   TargetingRule,
   TrafficAllocation,
-  VariantTarget,
 } from '../model/flag.js';
 import type { FlagValue } from '../model/json.js';
 import { parseCondition } from './condition.js';
@@ -31,6 +30,7 @@ import {
   requireStringArray,
 } from './primitives.js';
 import type { FlagParseIssue } from './primitives.js';
+import { parseTargets } from './targets.js';
 
 /**
  * Validates one definition.
@@ -189,47 +189,6 @@ function parsePrerequisites(raw: unknown, key: string): Prerequisite[] | undefin
     }
 
     return { flag, variants };
-  });
-}
-
-function parseTargets(
-  raw: unknown,
-  key: string,
-  variantNames: ReadonlySet<string>,
-): VariantTarget[] | undefined {
-  if (raw === undefined || raw === null) return undefined;
-  if (!Array.isArray(raw)) fail(`flag ${key}: targets must be an array`);
-
-  const seen = new Set<string>();
-
-  return raw.map((entry: unknown, index: number): VariantTarget => {
-    if (!isRecord(entry)) fail(`flag ${key}: target ${index} must be an object`);
-
-    const variant = requireString(entry['variant'], `flag ${key}: target ${index} variant`);
-    if (!variantNames.has(variant)) {
-      fail(`flag ${key}: target points at unknown variant ${variant}`);
-    }
-
-    const keys = requireStringArray(entry['keys'], `flag ${key}: target ${variant} keys`);
-
-    // Two defects, told apart, because they send an operator to different
-    // places. `seen` spans the whole list and catches a key two targets both
-    // claim; `own` is this target's own list, and a key repeated inside it
-    // reported as appearing "in more than one target" sent whoever read it
-    // looking for a second target that does not exist.
-    const own = new Set<string>();
-    for (const targetKey of keys) {
-      if (own.has(targetKey)) {
-        fail(`flag ${key}: target ${variant} lists targeting key "${targetKey}" more than once`);
-      }
-      if (seen.has(targetKey)) {
-        fail(`flag ${key}: targeting key "${targetKey}" appears in more than one target`);
-      }
-      own.add(targetKey);
-      seen.add(targetKey);
-    }
-
-    return { variant, keys };
   });
 }
 

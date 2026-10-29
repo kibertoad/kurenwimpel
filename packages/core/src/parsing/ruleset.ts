@@ -161,6 +161,8 @@ const DEFINITION_FIELDS = [
   'rules',
   'included',
   'excluded',
+  'includedHashes',
+  'excludedHashes',
 ] as const;
 
 function looksLikeDefinition(value: unknown): boolean {

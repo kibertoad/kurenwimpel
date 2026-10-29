@@ -19,6 +19,7 @@ document itself.
 | [0007](0007-experimentation-primitives.md)     | Impressions are a synchronous hook; seeds and bucketBy live on the split |
 | [0008](0008-operator-set.md)                   | Semver operators in, regex and date operators out                        |
 | [0009](0009-vendored-ofrep-spec.md)            | The OFREP contract is grounded on a vendored copy of the document        |
+| [0012](0012-hashed-key-lists.md)               | Segments and targets may hold SHA-256 digests of targeting keys          |
 
 The evaluation pipeline the records collectively describe, in order:
 

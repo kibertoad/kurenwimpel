@@ -72,16 +72,32 @@ export interface RolloutSplit {
 export type Rollout = readonly RolloutBucket[] | RolloutSplit;
 
 /**
+ * Targeting keys stored as digests rather than in the clear, so a ruleset can
+ * name individual users without carrying their identifiers. `values` holds the
+ * SHA-256 of each key's UTF-8 encoding as 64 lowercase hex characters; see
+ * `sha256Hex`. ADR 0012 records the trade.
+ */
+export interface HashedKeyList {
+  readonly algorithm: 'sha256';
+  readonly values: readonly string[];
+}
+
+/**
  * Individual targeting: these keys always get this variant.
  *
  * Checked before traffic allocation and rules, so a QA account or a demo
  * tenant sees a treatment regardless of any percentage. Snapshots fold every
  * flag's targets into one key-to-variant map when they are built, so the list
  * costs one probe per evaluation however long it grows.
+ *
+ * A target lists plain `keys`, hashed `keyHashes`, or both. A plain match is
+ * checked first, and the targeting key is hashed only when the flag has hashed
+ * targets and no plain one matched.
  */
 export interface VariantTarget {
   readonly variant: string;
-  readonly keys: readonly string[];
+  readonly keys?: readonly string[];
+  readonly keyHashes?: HashedKeyList;
 }
 
 /**
