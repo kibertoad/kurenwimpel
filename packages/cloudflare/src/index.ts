@@ -7,6 +7,7 @@
  */
 
 export { DEFAULT_FLAGS_KEY, DEFAULT_KV_TIMEOUT_MS, KvFlagProvider } from './kv-provider.js';
+export { DEFAULT_KV_MAX_BYTES } from './read-capped.js';
 export type { KvFlagMetadata, KvProviderOptions } from './kv-provider.js';
 
 export {

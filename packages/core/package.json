@@ -30,6 +30,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:mutation": "stryker run",
+    "bench": "vitest bench --run",
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "devDependencies": {

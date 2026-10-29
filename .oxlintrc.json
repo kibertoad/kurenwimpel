@@ -52,7 +52,7 @@
   },
   "overrides": [
     {
-      "files": ["**/*.test.ts", "**/test/**"],
+      "files": ["**/*.test.ts", "**/test/**", "**/bench/**"],
       "rules": {
         "typescript/no-explicit-any": "off",
         "no-console": "off",

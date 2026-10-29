@@ -104,6 +104,23 @@ keeps its old verdict even when a new test targets it, so delete the incremental
 file when the score itself is the point. The Cloudflare package is not mutated:
 its tests run inside workerd, which Stryker's vitest runner cannot drive.
 
+### Benchmarks
+
+```sh
+pnpm run bench                                    # every package, one at a time
+pnpm --filter @kurenwimpel/core run bench         # one package
+```
+
+Benchmarks are `vitest bench` files. Core's live in `packages/core/bench/`: any
+`*.bench.ts` there is picked up, and `fixtures.ts` builds the rulesets they share.
+`packages/cloudflare/bench/` times the same snapshot build inside workerd, from
+the same fixtures. Retained heap is printed as `retained heap | ... ` lines, from
+`bench/heap.ts`.
+
+CI runs them on every pull request and keeps one comment on the PR updated with
+the results. The job never fails a PR: shared runners are too noisy for a
+threshold, so read the numbers as a trend.
+
 ### Releasing
 
 Versions and changelogs are managed with [Changesets](https://changesets.dev). A PR
@@ -286,6 +303,11 @@ if (flags.getBoolean('new-checkout', false, { targetingKey: user.id, plan: user.
 `FileFlagProvider` is the alternative for flags shipped with the deployment or
 mounted from a ConfigMap.
 
+`HttpFlagProvider` refuses a response body larger than `maxBytes` (10 MiB by
+default) before parsing it: up front when `Content-Length` says so, and otherwise
+as soon as the body read passes the limit. See [Limits](#limits) for what a
+ruleset of that size costs.
+
 To keep booting while the control plane is down, give the provider a store for
 the last ruleset that loaded (see [Failure behaviour](#failure-behaviour)):
 
@@ -343,6 +365,7 @@ flags ??= new WorkerFlags({
 | Option                        | Default            | Effect                                                                                                                             |
 | ----------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `KvFlagProvider` `timeoutMs`  | `1000`             | Fails a KV read that takes longer. The read is abandoned, since KV's `get` takes no `AbortSignal`.                                 |
+| `KvFlagProvider` `maxBytes`   | 10 MiB             | Fails the load when the KV value is larger. The value is streamed and the read stops at the limit, so it is never parsed.          |
 | `WorkerFlags` `onInitFailure` | `'serve-defaults'` | `'throw'` makes `get()` reject while no snapshot has loaded, for services that would rather fail closed.                           |
 | `WorkerFlags` `retryAfterMs`  | `5000`             | Wait after a failed first load before the next request tries again; also the refresh interval while a fallback snapshot is served. |
 | `WorkerFlags` `bootstrap`     | none               | Raw ruleset installed with `origin: 'fallback'` when the first load fails.                                                         |
@@ -382,6 +405,9 @@ fails.
   provider's `timeoutMs` counts as a failed load.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
+- A payload larger than the provider's **`maxBytes`** is a failed load, like an
+  unreachable source: it is never parsed, and a last-known-good store or
+  `bootstrap` covers it the same way.
 - A **malformed flag or segment** is dropped and reported through
   `onParseIssues`; the rest of the ruleset still loads. A key defined twice
   keeps the first definition and reports the rest, rather than letting array
@@ -405,6 +431,53 @@ fails.
   ruleset. Check `ready` first if a 5xx is not what you want.
 - A throwing `onImpression` hook is reported through `onError` and never fails
   the evaluation.
+
+## Limits
+
+The whole ruleset lives in memory in every process and every Worker isolate, and
+an isolate parses it on the request path of its first request. These limits come
+from the platform and from the benchmarks in this repo.
+
+| Limit                                              | Value  | Source                                                                          |
+| -------------------------------------------------- | ------ | ------------------------------------------------------------------------------- |
+| Workers KV value size                              | 25 MiB | [Cloudflare](https://developers.cloudflare.com/kv/platform/limits/)             |
+| Workers memory per isolate                         | 128 MB | [Cloudflare](https://developers.cloudflare.com/workers/platform/limits/#memory) |
+| `maxBytes` on `HttpFlagProvider`, `KvFlagProvider` | 10 MiB | Default; pass `maxBytes` to change it                                           |
+
+Measured on 2026-10-29 on an Intel Core Ultra 9 285HX (24 logical cores, 63 GiB),
+Windows 11, Node v26.13.0, and workerd 1.20260815.1 through
+`@cloudflare/vitest-pool-workers` 0.22.0. Each figure is the mean of a
+`pnpm run bench` run. Expect a CI runner or a production colo to be slower.
+
+| Snapshot build (JSON parse, validate, build) | Payload  | Node    | workerd | Retained heap, Node |
+| -------------------------------------------- | -------- | ------- | ------- | ------------------- |
+| 1 000 flags                                  | 0.48 MiB | 3.6 ms  | 4.2 ms  | 1.3 MiB             |
+| 20 000 flags                                 | 9.62 MiB | 84 ms   | 86 ms   | 25.5 MiB            |
+| one segment of 100 000 keys                  | 1.23 MiB | 11.2 ms | 15.6 ms | 5.5 MiB             |
+
+| Evaluation                                | Mean   |
+| ----------------------------------------- | ------ |
+| trivial flag                              | 0.1 µs |
+| 20 rules, then a rollout                  | 1.5 µs |
+| prerequisites three deep                  | 1.0 µs |
+| `inSegment` against a 100 000-key segment | 0.2 µs |
+| `evaluateAll` over 500 flags              | 138 µs |
+
+What that means in practice:
+
+- **Cold start** costs about 9 ms per MiB of flags and 13 ms per MiB of segment
+  keys in workerd. The first request of every new isolate pays it once. workerd
+  reports time in whole milliseconds, so its small-payload figures are coarse.
+- **Memory** retained by a snapshot is about 2.7 times the payload for flags and
+  4.5 times for segment keys, and a refresh briefly holds the old snapshot, the
+  new one and the payload together. A 10 MiB ruleset keeps about 26 MiB, which
+  leaves most of a 128 MB isolate to the application; a ruleset near the 25 MiB
+  KV limit would not.
+- **Evaluation** of one flag does not grow with the size of the ruleset or of a
+  segment: segment membership is a set lookup. Rule count and prerequisite depth
+  are what cost. `evaluateAll` grows linearly with the number of flags.
+- The 10 MiB `maxBytes` default sits where a cold start costs about 90 ms and the
+  snapshot keeps about 26 MiB. Raise it with both of those in mind.
 
 ## Adding a platform
 
