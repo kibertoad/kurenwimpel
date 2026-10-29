@@ -16,12 +16,22 @@ document.
 ## `validate`
 
 ```sh
-kurenwimpel validate flags.json other.json [--format text|json]
+kurenwimpel validate flags.json other.json [--format text|json|markdown|github]
 ```
 
 Runs the SDK's own parser over each file and prints every issue with its `at`
 path, the same issues a running service would report through `onParseIssues`. A
 file that is not valid JSON is reported as an issue at `$`.
+
+`--format markdown` prints a section for a pull request comment. `--format github`
+prints one [`::error` workflow command](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#setting-an-error-message)
+per issue, which GitHub Actions shows as an annotation on the changed file. The
+annotation sits on the line that defines the flag or segment the issue is about, or,
+for a file that is not JSON, on the line the parser stopped at:
+
+```text
+::error file=flags/production.json,line=12,title=kurenwimpel%3A new-checkout::flag new-checkout: defaultVariant points at unknown variant x
+```
 
 ## `diff`
 
@@ -75,14 +85,16 @@ the flat OpenFeature shape and defaults to `{}`.
 ## `publish`
 
 ```sh
-kurenwimpel publish production flags/production.json [--config <path>] [--allow-issues] [--format text|json]
+kurenwimpel publish production [flags/production.json] [--config <path>] [--allow-issues] [--format text|json]
 ```
 
 Publishes a ruleset to the target configured for an environment (see
-[Configuration](#configuration)).
+[Configuration](#configuration)). Without a file, it publishes the environment's
+`ruleset` from the config.
 
 - A ruleset with parse issues is refused with exit code 1, and nothing is written.
-  The check runs before the config is read, so it needs no credentials.
+  The check runs before any credential is read, and, when the file is named,
+  before the config is read too.
   `--allow-issues` publishes it anyway, for emergencies, and prints a banner to
   stderr listing every definition clients will drop.
 - The revision is the SHA-256 of the document's canonical JSON (keys sorted, no
@@ -130,16 +142,40 @@ one served now is marked with `*`.
   9d1b77e2...  2026-10-28T16:03:10.002Z
 ```
 
+## `envs`
+
+```sh
+kurenwimpel envs [--changed <file...>] [--config <path>] [--format text|json|codeowners]
+```
+
+Lists the configured environments with their ruleset and approvers. It is what a
+CI workflow uses to decide which environments a change touches:
+
+```sh
+git diff --name-only -z origin/main...HEAD | xargs -0 kurenwimpel envs --changed --format json
+```
+
+- With `--changed`, only the environments whose ruleset is among the files are
+  listed. A change to the config itself lists every environment, since it may point
+  any of them at another target. No files lists none.
+- Paths are compared and printed relative to the working directory, so run it from
+  the repository root, as `git diff --name-only` prints them.
+- `--format codeowners` prints one [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+  line per environment that has `approvers`, such as
+  `/flags/production.json @acme/flags-production`.
+
 ## Configuration
 
-`publish`, `rollback` and `revisions` read `kurenwimpel.config.json` from the
-working directory, or the file `--config` names. It maps each environment to the
-target it publishes to:
+`publish`, `rollback`, `revisions` and `envs` read `kurenwimpel.config.json` from
+the working directory, or the file `--config` names. It maps each environment to the
+target it publishes to, and optionally to its ruleset and approvers:
 
 ```json
 {
   "environments": {
     "production": {
+      "ruleset": "production.json",
+      "approvers": ["@acme/flags-production"],
       "target": { "type": "kv", "accountId": "0f2a...", "namespaceId": "9c41..." }
     },
     "staging": {
@@ -151,6 +187,14 @@ target it publishes to:
   }
 }
 ```
+
+| Field       | Default                                                                                                                                                                                            |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target`    | required, see below                                                                                                                                                                                |
+| `ruleset`   | `<env>.json`. The document `publish` publishes when no file is named, and the one `envs --changed` watches. Relative to the config file.                                                           |
+| `approvers` | none. CODEOWNERS owners (`@org/team`, `@user` or an email), one of whom must approve a change to the ruleset. `envs --format codeowners` prints the lines; GitHub branch protection enforces them. |
+
+Each target type takes these fields:
 
 | Type   | Field                | Default                                                                                                                             |
 | ------ | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -197,7 +241,7 @@ A missing variable fails the command with exit code 2 before anything is written
 
 | Code | Meaning                                                                                                                                                                                                                                                |
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `publish` published or found nothing to write; `rollback` and `revisions` ran.                                     |
+| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `publish` published or found nothing to write; `rollback`, `revisions` and `envs` ran.                             |
 | `1`  | Findings. `validate` found an issue in some file; `diff --exit-code` found a change; `eval` returned an error code for some flag; `publish` refused a ruleset with parse issues.                                                                       |
 | `2`  | The command could not run: unknown command or option, wrong number of files, an unreadable file, an input that is not JSON, an invalid config, a missing credential, a payload over the size limit, a target that failed, no revision to roll back to. |
 
@@ -336,6 +380,9 @@ on a first publish.
 `rollback` prints `{ "environment", "status", "from", "to" }`, with `status`
 `rolled-back` or `unchanged`. `revisions` prints `{ "environment", "revisions" }`,
 each revision `{ "revision", "publishedAt", "current" }`, newest first.
+
+`envs` prints `{ "environments" }`, each `{ "name", "ruleset", "approvers" }` in
+config order, with `approvers` empty when the config names none.
 
 ## Programmatic use
 

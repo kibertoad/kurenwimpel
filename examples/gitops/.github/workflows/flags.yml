@@ -1,0 +1,232 @@
+name: Flags
+
+# Pull requests: validate every changed environment, annotate its issues inline,
+# and keep one sticky comment with each environment's diff against the base.
+# Pushes to main: publish every changed environment from a job bound to the
+# GitHub environment of the same name, so its protection rules and secrets apply.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      config:
+        description: The kurenwimpel config, relative to the repository root.
+        type: string
+        default: flags/kurenwimpel.config.json
+      cli-version:
+        description: The @kurenwimpel/cli version to install.
+        type: string
+        default: latest
+      verify:
+        description: A command run after each publish, with ENVIRONMENT set. Failing it prints the rollback command.
+        type: string
+        default: ''
+
+permissions: {}
+
+env:
+  CONFIG: ${{ inputs.config || 'flags/kurenwimpel.config.json' }}
+  CLI_VERSION: ${{ inputs.cli-version || 'latest' }}
+
+jobs:
+  check:
+    name: validate and diff
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    concurrency:
+      group: flags-check-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-kurenwimpel
+        with:
+          version: ${{ env.CLI_VERSION }}
+
+      - name: Check that CODEOWNERS names every environment's approvers
+        run: |
+          status=0
+          while IFS= read -r line; do
+            if ! grep -qxF -- "$line" .github/CODEOWNERS; then
+              echo "::error file=.github/CODEOWNERS::Add \"$line\" for the approvers in $CONFIG"
+              status=1
+            fi
+          done < <(kurenwimpel envs --config "$CONFIG" --format codeowners)
+          exit "$status"
+
+      - name: Find the changed environments
+        id: changed
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          git diff --name-only -z "$BASE_REF...HEAD" \
+            | xargs -0 kurenwimpel envs --config "$CONFIG" --format json --changed \
+            > "$RUNNER_TEMP/environments.json"
+          echo "count=$(jq '.environments | length' "$RUNNER_TEMP/environments.json")" >> "$GITHUB_OUTPUT"
+
+      # Each environment gets a directory of Markdown sections, concatenated in name
+      # order into the comment. Another check adds a section by writing one more file.
+      - name: Validate and diff each changed environment
+        id: check
+        if: steps.changed.outputs.count != '0'
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          failed=false
+          while IFS=$'\t' read -r environment ruleset; do
+            sections="$RUNNER_TEMP/comment/$environment"
+            mkdir -p "$sections"
+
+            kurenwimpel validate "$ruleset" --format github || failed=true
+            kurenwimpel validate "$ruleset" --format markdown > "$sections/10-validate.md" || true
+
+            base="$RUNNER_TEMP/base.json"
+            git show "$BASE_REF:$ruleset" > "$base" 2> /dev/null || echo '[]' > "$base"
+            kurenwimpel diff "$base" "$ruleset" --format markdown > "$sections/20-diff.md" \
+              || echo '_No diff: the ruleset is not valid JSON._' > "$sections/20-diff.md"
+          done < <(jq -r '.environments[] | [.name, .ruleset] | @tsv' "$RUNNER_TEMP/environments.json")
+          echo "failed=$failed" >> "$GITHUB_OUTPUT"
+
+      - name: Assemble the comment
+        if: steps.changed.outputs.count != '0'
+        run: |
+          {
+            for sections in "$RUNNER_TEMP"/comment/*/; do
+              echo "## Environment \`$(basename "$sections")\`"
+              for section in "$sections"*.md; do
+                echo
+                cat "$section"
+              done
+              echo
+            done
+          } > "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post the sticky comment
+        if: steps.changed.outputs.count != '0' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: kurenwimpel
+          path: ${{ runner.temp }}/comment.md
+
+      - name: Remove the comment once no environment changes
+        if: steps.changed.outputs.count == '0' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: kurenwimpel
+          delete: true
+
+      - name: Fail on ruleset issues
+        if: steps.check.outputs.failed == 'true'
+        run: |
+          echo '::error::A ruleset has issues. They are annotated on the changed files.'
+          exit 1
+
+  plan:
+    name: find the changed environments
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      environments: ${{ steps.changed.outputs.environments }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-kurenwimpel
+        with:
+          version: ${{ env.CLI_VERSION }}
+
+      # A first push, or a force push whose old head is gone, publishes everything.
+      - id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if git cat-file -e "$BEFORE^{commit}" 2> /dev/null; then
+            git diff --name-only -z "$BEFORE" HEAD \
+              | xargs -0 kurenwimpel envs --config "$CONFIG" --format json --changed \
+              > "$RUNNER_TEMP/environments.json"
+          else
+            kurenwimpel envs --config "$CONFIG" --format json > "$RUNNER_TEMP/environments.json"
+          fi
+          echo "environments=$(jq -c '[.environments[].name]' "$RUNNER_TEMP/environments.json")" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: publish ${{ matrix.environment }}
+    needs: plan
+    if: needs.plan.outputs.environments != '[]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ fromJSON(needs.plan.outputs.environments) }}
+    environment: ${{ matrix.environment }}
+    concurrency:
+      group: flags-publish-${{ matrix.environment }}
+      cancel-in-progress: false
+    env:
+      ENVIRONMENT: ${{ matrix.environment }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-kurenwimpel
+        with:
+          version: ${{ env.CLI_VERSION }}
+
+      # Each GitHub environment holds its own values under these names. An unset
+      # secret is an empty string, which the CLI treats as missing.
+      - name: Publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: kurenwimpel publish "$ENVIRONMENT" --config "$CONFIG" --format json | tee "$RUNNER_TEMP/publish.json"
+
+      - name: Verify
+        if: inputs.verify != ''
+        env:
+          VERIFY: ${{ inputs.verify }}
+        run: bash -c "$VERIFY"
+
+      # After a completed publish, the revision it replaced is the one to go back to.
+      # Otherwise the target may hold a new revision that is not live yet, so list first.
+      - name: Print the rollback command
+        if: failure()
+        run: |
+          report="$RUNNER_TEMP/publish.json"
+          status=$(jq -r '.status // empty' "$report" 2> /dev/null || true)
+          previous=$(jq -r '.previousRevision // empty' "$report" 2> /dev/null || true)
+          if [ "$status" = published ] && [ -n "$previous" ]; then
+            commands="kurenwimpel rollback $ENVIRONMENT --config $CONFIG --to $previous"
+          else
+            commands="kurenwimpel revisions $ENVIRONMENT --config $CONFIG
+          kurenwimpel rollback $ENVIRONMENT --config $CONFIG --to <revision>"
+          fi
+          echo "::error title=Publishing $ENVIRONMENT failed::Roll back with the flags-rollback workflow, or run: ${commands//$'\n'/; then }"
+          printf '%s\n' \
+            "### Publishing \`$ENVIRONMENT\` failed" \
+            '' \
+            "Roll back with the \`flags-rollback\` workflow, or run this with the environment credentials:" \
+            '' \
+            "\`\`\`sh" \
+            "$commands" \
+            "\`\`\`" \
+            >> "$GITHUB_STEP_SUMMARY"

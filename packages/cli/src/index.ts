@@ -28,7 +28,18 @@ export type { Explanation, PrerequisiteOutcomeReport, PrerequisiteStatus } from 
 export { renderDiffMarkdown, renderDiffText } from './format/diff-format.js';
 export { loadRuleset } from './ruleset-file.js';
 export type { LoadedRuleset } from './ruleset-file.js';
-export { loadConfig, parseConfig, resolveTarget } from './config/load-config.js';
+export type { EnvsReport } from './commands/envs.js';
+export { renderValidateGithub, renderValidateMarkdown } from './format/validate-format.js';
+export type { ValidatedText } from './format/validate-format.js';
+export { changedEnvironments, codeownersLines, listEnvironments } from './config/environments.js';
+export type { EnvironmentSummary } from './config/environments.js';
+export {
+  environmentOf,
+  loadConfig,
+  parseConfig,
+  resolveRuleset,
+  resolveTarget,
+} from './config/load-config.js';
 export type { LoadedConfig } from './config/load-config.js';
 export { ConfigError } from './config/fields.js';
 export { DEFAULT_CONFIG_PATH, DEFAULT_KEEP } from './config/types.js';

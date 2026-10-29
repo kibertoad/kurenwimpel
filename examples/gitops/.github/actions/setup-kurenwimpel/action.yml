@@ -1,0 +1,25 @@
+name: Set up kurenwimpel
+description: Installs Node.js and the kurenwimpel CLI, and puts `kurenwimpel` on the PATH.
+
+inputs:
+  version:
+    description: The @kurenwimpel/cli version to install. Pin an exact version so a release never changes a check by surprise.
+    required: false
+    default: latest
+  node-version:
+    description: The Node.js version to run it on. The CLI needs 22.12 or later.
+    required: false
+    default: '24'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install @kurenwimpel/cli
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: npm install --global --no-fund --no-audit "@kurenwimpel/cli@$VERSION"

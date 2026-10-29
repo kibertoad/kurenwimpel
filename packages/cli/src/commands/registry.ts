@@ -1,5 +1,6 @@
 import type { Command } from '../command.js';
 import { diffCommand } from './diff.js';
+import { envsCommand } from './envs.js';
 import { evalCommand } from './eval.js';
 import { publishCommand } from './publish.js';
 import { revisionsCommand, rollbackCommand } from './rollback.js';
@@ -13,4 +14,5 @@ export const COMMANDS: readonly Command[] = [
   publishCommand,
   rollbackCommand,
   revisionsCommand,
+  envsCommand,
 ];

@@ -9,6 +9,10 @@ export interface KurenwimpelConfig {
 
 export interface EnvironmentConfig {
   readonly target: TargetConfig;
+  /** The ruleset document, relative to the config file. Defaults to `<env>.json`. */
+  readonly ruleset?: string;
+  /** CODEOWNERS owners, one of whom must approve a change: `@org/team`, `@user` or an email. */
+  readonly approvers?: readonly string[];
 }
 
 export type TargetConfig = KvTargetConfig | FileTargetConfig | ObjectTargetConfig;

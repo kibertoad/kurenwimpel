@@ -1,0 +1,7 @@
+# The environment lines are what `kurenwimpel envs --config flags/kurenwimpel.config.json
+# --format codeowners` prints from each environment's approvers; the flags workflow fails
+# when one is missing. GitHub enforces them only with "Require review from Code Owners"
+# on the main branch.
+/flags/kurenwimpel.config.json @acme/platform
+/flags/production.json @acme/flags-production
+/flags/staging.json @acme/flags-staging
