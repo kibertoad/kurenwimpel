@@ -12,5 +12,8 @@
     "types": []
   },
   "include": ["src/**/*.ts", "worker-configuration.d.ts"],
-  "references": [{ "path": "../core/tsconfig.build.json" }]
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../ofrep-server/tsconfig.build.json" }
+  ]
 }

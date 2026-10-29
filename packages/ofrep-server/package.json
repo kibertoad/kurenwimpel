@@ -1,0 +1,53 @@
+{
+  "name": "@kurenwimpel/ofrep-server",
+  "version": "0.0.0",
+  "description": "OFREP server for kurenwimpel feature flags, written against the Fetch API.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kibertoad/kurenwimpel.git",
+    "directory": "packages/ofrep-server"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:mutation": "stryker run",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@kurenwimpel/core": "workspace:^",
+    "@kurenwimpel/ofrep": "workspace:^",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@openfeature/ofrep-provider": "^0.2.5",
+    "@openfeature/server-sdk": "^1.23.0",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
+    "@toad-contracts/core": "^0.4.0",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
