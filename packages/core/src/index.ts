@@ -78,13 +78,16 @@ export { parseSegmentDefinition } from './parsing/segment.js';
 
 // runtime
 export { FeatureFlagClient } from './runtime/client.js';
+export type { ResolvedEvaluation } from './runtime/client.js';
 export type {
   BulkEvaluationOptions,
   ClientErrorInfo,
   FeatureFlagClientOptions,
-  ImpressionEvent,
-  ResolvedEvaluation,
-} from './runtime/client.js';
+} from './runtime/client-options.js';
+export type { ImpressionEvent } from './runtime/impressions.js';
+export { CountingMetrics } from './runtime/metrics.js';
+export type { EvaluationCount, MetricsSink } from './runtime/metrics.js';
+export type { ClientStatus } from './runtime/status.js';
 export { StaticProvider } from './runtime/provider.js';
 export type {
   FlagProvider,

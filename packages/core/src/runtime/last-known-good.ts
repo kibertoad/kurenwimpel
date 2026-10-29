@@ -54,7 +54,7 @@ export function snapshotFromRuleset(
   options: RulesetSourceOptions = {},
 ): FlagSnapshot {
   const { flags, segments, issues } = parseRuleset(raw);
-  if (issues.length > 0) options.onParseIssues?.(issues);
+  reportIssues(issues, options);
 
   const snapshot = createSnapshot(flags, meta, segments);
   if (snapshot.origin === 'live' && options.lastKnownGood !== undefined) {
@@ -106,7 +106,7 @@ async function readFallback(options: RulesetSourceOptions): Promise<FlagSnapshot
     const { flags, segments, issues } = parseRuleset(stored.raw);
     // A payload that yields nothing but issues is not a ruleset that ever loaded.
     if (flags.length === 0 && issues.length > 0) return null;
-    if (issues.length > 0) options.onParseIssues?.(issues);
+    reportIssues(issues, options);
 
     const meta: SnapshotMeta = {
       origin: 'fallback',
@@ -117,6 +117,11 @@ async function readFallback(options: RulesetSourceOptions): Promise<FlagSnapshot
   } catch {
     return null;
   }
+}
+
+function reportIssues(issues: readonly FlagParseIssue[], options: RulesetSourceOptions): void {
+  options.context?.reportParseIssues?.(issues);
+  if (issues.length > 0) options.onParseIssues?.(issues);
 }
 
 function persist(

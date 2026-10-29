@@ -320,6 +320,78 @@ const provider = new HttpFlagProvider({
 });
 ```
 
+### Health and metrics
+
+`client.status()` reports how fresh the served snapshot is:
+
+| Field                  | Meaning                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `ready`                | A snapshot has been installed.                                                                           |
+| `origin`               | `'live'`, or `'fallback'` while a last-known-good copy or `bootstrap` is served.                         |
+| `snapshotVersion`      | The served snapshot's revision or ETag.                                                                  |
+| `snapshotBuiltAt`      | When the served snapshot was built. It stays put while the provider answers 304.                         |
+| `lastSuccessfulLoadAt` | The last load that installed a live snapshot or confirmed the current one unchanged.                     |
+| `lastFailedLoadAt`     | The last load that failed or booted from a fallback.                                                     |
+| `consecutiveFailures`  | Failed loads since the last successful one.                                                              |
+| `totalLoadFailures`    | Failed loads over the client's lifetime.                                                                 |
+| `lastParseIssueCount`  | Parse issues in the served snapshot. A custom provider reports them through `context.reportParseIssues`. |
+
+Alert on `lastSuccessfulLoadAt`, not `snapshotBuiltAt`: a healthy client whose
+control plane answers 304 keeps its old snapshot, so the build time keeps aging
+while the client is perfectly fresh. A readiness probe built on it:
+
+```ts
+const MAX_STALENESS_MS = 5 * 60_000;
+
+app.get('/ready', (_request, reply) => {
+  const status = flags.status();
+  const fresh =
+    status.lastSuccessfulLoadAt !== undefined &&
+    Date.now() - status.lastSuccessfulLoadAt < MAX_STALENESS_MS;
+  reply.code(status.ready && fresh ? 200 : 503).send(status);
+});
+```
+
+`onSnapshotChange(snapshot, previous)` is called whenever a new snapshot replaces
+the served one, with `previous` undefined on the first install.
+
+The `metrics` option takes a sink whose `record(flagKey, variant, reason,
+errorCode)` is called once per evaluation, including each flag of
+`evaluateAll()`. No event object is built for it, so it is cheaper than
+`onImpression`. `CountingMetrics` counts in memory, and `collect()` returns the
+counts since the previous call:
+
+```ts
+import { CountingMetrics, PollingFlagClient } from '@kurenwimpel/node';
+
+const usage = new CountingMetrics();
+const flags = new PollingFlagClient({ provider, metrics: usage });
+
+setInterval(() => report(usage.collect()), 60_000);
+```
+
+`@kurenwimpel/node/opentelemetry` feeds the same data to OpenTelemetry. It needs
+`@opentelemetry/api`, an optional peer dependency that the main entry never
+loads.
+
+```ts
+import { metrics } from '@opentelemetry/api';
+import { OpenTelemetryMetrics } from '@kurenwimpel/node/opentelemetry';
+
+const otel = new OpenTelemetryMetrics(metrics.getMeter('billing'));
+const flags = new PollingFlagClient({ provider, metrics: otel });
+otel.observe(flags);
+```
+
+| Instrument           | Kind               | Attributes                                                                                    |
+| -------------------- | ------------------ | --------------------------------------------------------------------------------------------- |
+| `flag.evaluations`   | counter            | `feature_flag.key`, `feature_flag.result.variant`, `feature_flag.result.reason`, `error.type` |
+| `flag.snapshot.age`  | gauge, seconds     | `feature_flag.provider.name`; age measured from `lastSuccessfulLoadAt`                        |
+| `flag.load.failures` | observable counter | `feature_flag.provider.name`; reads `totalLoadFailures`                                       |
+
+Reasons and error codes are reported lowercased (`targeting_match`,
+`flag_not_found`), as the feature-flag semantic conventions spell them.
+
 ### Cloudflare Workers
 
 ```ts
@@ -429,8 +501,9 @@ fails.
   bulk body has no per-flag slot to report `PROVIDER_NOT_READY` in, and
   answering it with zero flags is indistinguishable from a healthy empty
   ruleset. Check `ready` first if a 5xx is not what you want.
-- A throwing `onImpression` hook is reported through `onError` and never fails
-  the evaluation.
+- A throwing `onImpression` hook or `metrics` sink is reported through `onError`
+  and never fails the evaluation. A throwing `onSnapshotChange` is reported the
+  same way, and the snapshot is installed regardless.
 
 ## Limits
 

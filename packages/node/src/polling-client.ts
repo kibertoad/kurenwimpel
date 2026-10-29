@@ -1,19 +1,8 @@
-import {
-  FeatureFlagClient,
-  type ClientErrorInfo,
-  type EvaluationContext,
-  type FlagProvider,
-  type ImpressionEvent,
-} from '@kurenwimpel/core';
+import { FeatureFlagClient, type FeatureFlagClientOptions } from '@kurenwimpel/core';
 
-export interface PollingFlagClientOptions {
-  readonly provider: FlagProvider;
+export interface PollingFlagClientOptions extends FeatureFlagClientOptions {
   /** Interval between background reloads. */
   readonly pollIntervalMs?: number;
-  readonly defaultContext?: EvaluationContext;
-  readonly onError?: (error: Error, info: ClientErrorInfo) => void;
-  /** The exposure feed for experiment analysis; one event per evaluation. */
-  readonly onImpression?: (event: ImpressionEvent) => void;
 }
 
 export const DEFAULT_POLL_INTERVAL_MS = 30_000;
@@ -31,12 +20,7 @@ export class PollingFlagClient extends FeatureFlagClient {
   #timer: NodeJS.Timeout | undefined;
 
   constructor(options: PollingFlagClientOptions) {
-    super({
-      provider: options.provider,
-      ...(options.defaultContext === undefined ? {} : { defaultContext: options.defaultContext }),
-      ...(options.onError === undefined ? {} : { onError: options.onError }),
-      ...(options.onImpression === undefined ? {} : { onImpression: options.onImpression }),
-    });
+    super(options);
 
     this.#pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   }

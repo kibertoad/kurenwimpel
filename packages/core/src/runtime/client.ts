@@ -1,71 +1,21 @@
-import { readTargetingKey } from '../evaluation/conditions.js';
 import { createSharedMemo, evaluateFlag } from '../evaluation/evaluate.js';
 import type { EvaluationEnvironment } from '../evaluation/evaluate.js';
 import type { AttributeValue, EvaluationContext } from '../model/context.js';
-import type { FlagDefinition, FlagMetadata } from '../model/flag.js';
+import type { FlagDefinition } from '../model/flag.js';
 import type { FlagValue, JsonObject } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
+import type {
+  BulkEvaluationOptions,
+  ClientErrorInfo,
+  FeatureFlagClientOptions,
+} from './client-options.js';
+import { impressionOf, mergeContext } from './impressions.js';
 import type { FlagProvider, ProviderLoadContext } from './provider.js';
 import { completeSnapshot, EMPTY_SNAPSHOT, environmentOf } from './snapshot.js';
 import type { FlagSnapshot } from './snapshot.js';
-
-export interface ClientErrorInfo {
-  readonly operation: 'load' | 'close' | 'impression' | 'store';
-  readonly provider: string;
-}
-
-/**
- * One evaluation, described for analytics: the exposure record an A/B test
- * joins against its outcome metric. Emitted synchronously through
- * `onImpression`; batching, sampling, and shipping are the consumer's job.
- */
-export interface ImpressionEvent {
-  readonly flagKey: string;
-  readonly value: FlagValue | undefined;
-  readonly variant: string | undefined;
-  readonly reason: EvaluationReason;
-  readonly ruleId?: string;
-  readonly errorCode?: EvaluationErrorCode;
-  readonly targetingKey?: string;
-  /** The flag definition version, when the control plane stamps one. */
-  readonly flagVersion?: number;
-  readonly metadata?: FlagMetadata;
-  /** Epoch millis when the evaluation happened. */
-  readonly timestamp: number;
-}
-
-/** Knobs for {@link FeatureFlagClient.evaluateAll}. */
-export interface BulkEvaluationOptions {
-  /**
-   * Emit an impression per flag. Off by default: a bulk fetch is not an
-   * exposure, and counting it as one makes every experiment's exposed
-   * population "everyone who loaded the page".
-   */
-  readonly impressions?: boolean;
-}
-
-export interface FeatureFlagClientOptions {
-  readonly provider: FlagProvider;
-  /**
-   * Attributes merged under every per-call context — service name, region,
-   * deployment stage. A per-call attribute wins on conflict; passing it as
-   * `undefined` clears the default for that one call, and leaving it out
-   * inherits the default.
-   */
-  readonly defaultContext?: EvaluationContext;
-  /**
-   * Called when a background refresh fails. Refresh errors are never thrown at
-   * evaluation sites, because a stale snapshot beats a failed request.
-   */
-  readonly onError?: (error: Error, info: ClientErrorInfo) => void;
-  /**
-   * Called once per evaluation with the served outcome. This is the exposure
-   * feed for experiment analysis; a throwing hook is reported through
-   * `onError` and never fails the evaluation.
-   */
-  readonly onImpression?: (event: ImpressionEvent) => void;
-}
+import { LoadHealth } from './status.js';
+import type { ClientStatus } from './status.js';
 
 /**
  * The evaluation entry point.
@@ -93,13 +43,21 @@ export class FeatureFlagClient {
   /** The default context's entries, walked once here instead of per evaluation. */
   readonly #defaultEntries: readonly (readonly [string, AttributeValue | undefined])[];
   readonly #onError: ((error: Error, info: ClientErrorInfo) => void) | undefined;
-  readonly #onImpression: ((event: ImpressionEvent) => void) | undefined;
+  readonly #onImpression: FeatureFlagClientOptions['onImpression'];
+  readonly #onSnapshotChange: FeatureFlagClientOptions['onSnapshotChange'];
+  readonly #metrics: FeatureFlagClientOptions['metrics'];
+  readonly #health = new LoadHealth();
 
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
   #environment: EvaluationEnvironment = environmentOf(EMPTY_SNAPSHOT);
   #ready = false;
   #loadInFlight: Promise<LoadOutcome> | undefined;
-  readonly #loadContext: ProviderLoadContext = { reportError: this.#report.bind(this) };
+  readonly #loadContext: ProviderLoadContext = {
+    reportError: this.#report.bind(this),
+    reportParseIssues: (issues) => {
+      this.#health.addParseIssues(issues.length);
+    },
+  };
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
@@ -107,6 +65,13 @@ export class FeatureFlagClient {
     this.#defaultEntries = Object.entries(this.#defaultContext);
     this.#onError = options.onError;
     this.#onImpression = options.onImpression;
+    this.#onSnapshotChange = options.onSnapshotChange;
+    this.#metrics = options.metrics;
+  }
+
+  /** Freshness and failure counters, for readiness probes and staleness alerts. */
+  status(): ClientStatus {
+    return this.#health.status(this.#snapshot, this.#ready);
   }
 
   /** True once a snapshot has been loaded at least once. */
@@ -193,14 +158,20 @@ export class FeatureFlagClient {
    * they do with the outcome.
    */
   #load(): Promise<LoadOutcome> {
-    this.#loadInFlight ??= this.#runLoad().finally(() => {
-      this.#loadInFlight = undefined;
-    });
+    this.#loadInFlight ??= this.#runLoad()
+      .then((outcome) => {
+        this.#health.finishLoad(outcome.status, this.#snapshot.origin);
+        return outcome;
+      })
+      .finally(() => {
+        this.#loadInFlight = undefined;
+      });
     return this.#loadInFlight;
   }
 
   async #runLoad(): Promise<LoadOutcome> {
     const isFirstLoad = !this.#ready;
+    this.#health.startLoad();
 
     try {
       const previous = isFirstLoad ? undefined : this.#snapshot;
@@ -233,12 +204,17 @@ export class FeatureFlagClient {
     }
   }
 
-  /** Replaces the snapshot directly. For tests and for pushed updates. */
+  /**
+   * Replaces the snapshot directly. For tests and for pushed updates. A live
+   * snapshot counts as a successful load in {@link FeatureFlagClient.status}.
+   */
   setSnapshot(snapshot: FlagSnapshot): void {
     this.#install(snapshot);
+    if (this.#snapshot.origin === 'live') this.#health.markSuccess();
   }
 
   #install(snapshot: FlagSnapshot): void {
+    const previous = this.#ready ? this.#snapshot : undefined;
     // Completed on the way in, so that the snapshot this client serves — and
     // hands back through `snapshot` — carries every lookup evaluation reads,
     // whoever built it. See {@link completeSnapshot}.
@@ -247,6 +223,12 @@ export class FeatureFlagClient {
     // not be allocating an environment object per lookup.
     this.#environment = environmentOf(this.#snapshot);
     this.#ready = true;
+
+    try {
+      this.#onSnapshotChange?.(this.#snapshot, previous);
+    } catch (error) {
+      this.#report(error, 'snapshotChange');
+    }
   }
 
   getBoolean(key: string, defaultValue: boolean, context?: EvaluationContext): boolean {
@@ -312,6 +294,7 @@ export class FeatureFlagClient {
     const merged = this.#mergeContext(context);
     const flag = this.#snapshot.flags.get(key);
     const result = this.#resolve(key, flag, merged);
+    this.#count(result);
     this.#impress(result, merged, flag);
     return result;
   }
@@ -343,6 +326,7 @@ export class FeatureFlagClient {
 
     for (const flag of this.#snapshot.flags.values()) {
       const result = evaluateFlag(flag, merged, this.#environment, memo);
+      this.#count(result);
       if (options?.impressions === true) this.#impress(result, merged, flag);
       results.push(result);
     }
@@ -391,6 +375,7 @@ export class FeatureFlagClient {
     const flag = this.#snapshot.flags.get(key);
     const result = this.#resolve(key, flag, merged);
     const final = this.#coerce(result, defaultValue, isExpectedType);
+    this.#count(final);
     this.#impress(final, merged, flag);
     return final;
   }
@@ -419,85 +404,30 @@ export class FeatureFlagClient {
     return { ...result, value: result.value };
   }
 
-  /**
-   * The definition is handed over by the caller rather than looked up here:
-   * every call site has just resolved it, and `evaluateAll` is already
-   * iterating the definitions it would otherwise re-probe the map for, once per
-   * flag in the ruleset.
-   */
+  #count(result: EvaluationResult): void {
+    if (this.#metrics === undefined) return;
+    try {
+      this.#metrics.record(result.key, result.variant, result.reason, result.errorCode);
+    } catch (error) {
+      this.#report(error, 'metrics');
+    }
+  }
+
   #impress(
     result: EvaluationResult,
     context: EvaluationContext,
     flag: FlagDefinition | undefined,
   ): void {
     if (this.#onImpression === undefined) return;
-
-    const flagVersion = flag?.version;
-    // Resolved through the one identity rule rather than read off the context,
-    // so the feed reports the key targeting actually used. Reading it directly
-    // put whatever the caller passed on the event: a number in a field typed
-    // string, breaking any downstream join on subject id; an empty string
-    // alongside TARGETING_KEY_MISSING, counting an exposure for a subject that
-    // was never bucketed; and, on a call with no per-call context, one
-    // inherited from the default context's prototype and invisible to
-    // targeting itself.
-    const targetingKey = readTargetingKey(context);
-
     try {
-      this.#onImpression({
-        flagKey: result.key,
-        value: result.value,
-        variant: result.variant,
-        reason: result.reason,
-        ...(result.ruleId === undefined ? {} : { ruleId: result.ruleId }),
-        ...(result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
-        ...(targetingKey === undefined ? {} : { targetingKey }),
-        ...(flagVersion === undefined ? {} : { flagVersion }),
-        ...(result.metadata === undefined ? {} : { metadata: result.metadata }),
-        timestamp: Date.now(),
-      });
+      this.#onImpression(impressionOf(result, context, flag));
     } catch (error) {
       this.#report(error, 'impression');
     }
   }
 
-  /**
-   * The context an evaluation actually runs against: the defaults, with
-   * whatever the call said about them applied over the top.
-   *
-   * An explicit `null` reads as "no per-call context", exactly as omitting one
-   * does. A JavaScript caller can pass it, the getters are documented never to
-   * throw, and `evaluateFlag` already absorbs the same mistake one layer down
-   * — this used to throw out of `Object.entries` before ever reaching it.
-   */
   #mergeContext(context: EvaluationContext | null | undefined): EvaluationContext {
-    if (context === undefined || context === null) return this.#defaultContext;
-
-    // Null prototype: an own `__proto__` key in a JSON-parsed context must
-    // land as plain data, never reach the Object.prototype setter and inject
-    // inherited attributes into targeting.
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion
-    const merged = Object.create(null) as Record<string, AttributeValue | undefined>;
-
-    for (const [attribute, value] of this.#defaultEntries) {
-      merged[attribute] = value;
-    }
-
-    // A default survives only where the call said nothing about the attribute.
-    // Naming it with an explicit `undefined` is how a caller says "this request
-    // has no stage", which it otherwise has no way to express — so one walk of
-    // one list drives both the clearing and the overwriting. Deciding which
-    // defaults to skip with `Object.hasOwn` while copying the values with
-    // `Object.entries` let the two disagree: a non-enumerable own attribute —
-    // an accessor on a class instance, a proxy-backed request object —
-    // suppressed the default without supplying anything in its place, and
-    // targeting saw neither.
-    for (const [attribute, value] of Object.entries(context)) {
-      if (value === undefined) delete merged[attribute];
-      else merged[attribute] = value;
-    }
-
-    return merged;
+    return mergeContext(this.#defaultContext, this.#defaultEntries, context);
   }
 
   #report(error: unknown, operation: ClientErrorInfo['operation']): void {
