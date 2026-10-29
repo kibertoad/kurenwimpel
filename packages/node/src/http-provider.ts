@@ -1,9 +1,12 @@
 import {
-  createSnapshot,
-  parseRuleset,
+  loadWithFallback,
+  snapshotFromRuleset,
   type FlagParseIssue,
   type FlagProvider,
   type FlagSnapshot,
+  type LastKnownGoodStore,
+  type ProviderLoadContext,
+  type RulesetSourceOptions,
 } from '@kurenwimpel/core';
 
 export interface HttpProviderOptions {
@@ -15,6 +18,8 @@ export interface HttpProviderOptions {
   /** Injected for tests; defaults to the global `fetch`. */
   readonly fetch?: typeof globalThis.fetch;
   readonly onParseIssues?: (issues: readonly FlagParseIssue[]) => void;
+  /** Where to keep the last ruleset that loaded, to boot from when the endpoint is down. */
+  readonly lastKnownGood?: LastKnownGoodStore;
 }
 
 export const DEFAULT_HTTP_TIMEOUT_MS = 5_000;
@@ -34,6 +39,7 @@ export class HttpFlagProvider implements FlagProvider {
   readonly #timeoutMs: number;
   readonly #fetch: typeof globalThis.fetch;
   readonly #onParseIssues: ((issues: readonly FlagParseIssue[]) => void) | undefined;
+  readonly #lastKnownGood: LastKnownGoodStore | undefined;
 
   constructor(options: HttpProviderOptions) {
     this.#url = String(options.url);
@@ -41,9 +47,22 @@ export class HttpFlagProvider implements FlagProvider {
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS;
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#onParseIssues = options.onParseIssues;
+    this.#lastKnownGood = options.lastKnownGood;
   }
 
-  async load(previous?: FlagSnapshot): Promise<FlagSnapshot | null> {
+  load(previous?: FlagSnapshot, context?: ProviderLoadContext): Promise<FlagSnapshot | null> {
+    const source: RulesetSourceOptions = {
+      lastKnownGood: this.#lastKnownGood,
+      onParseIssues: this.#onParseIssues,
+      context,
+    };
+    return loadWithFallback(previous, () => this.#fetchRuleset(previous, source), source);
+  }
+
+  async #fetchRuleset(
+    previous: FlagSnapshot | undefined,
+    source: RulesetSourceOptions,
+  ): Promise<FlagSnapshot | null> {
     const headers: Record<string, string> = { accept: 'application/json', ...this.#headers };
     if (previous?.version !== undefined) headers['if-none-match'] = previous.version;
 
@@ -73,11 +92,8 @@ export class HttpFlagProvider implements FlagProvider {
     }
 
     const raw: unknown = await response.json();
-    const { flags, segments, issues } = parseRuleset(raw);
-    if (issues.length > 0) this.#onParseIssues?.(issues);
-
     const etag = response.headers.get('etag');
 
-    return createSnapshot(flags, etag === null ? {} : { version: etag }, segments);
+    return snapshotFromRuleset(raw, etag === null ? {} : { version: etag }, source);
   }
 }

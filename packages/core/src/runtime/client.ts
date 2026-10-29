@@ -6,12 +6,12 @@ import type { FlagDefinition, FlagMetadata } from '../model/flag.js';
 import type { FlagValue, JsonObject } from '../model/json.js';
 import { EvaluationErrorCode, EvaluationReason } from '../model/result.js';
 import type { EvaluationResult } from '../model/result.js';
-import type { FlagProvider } from './provider.js';
+import type { FlagProvider, ProviderLoadContext } from './provider.js';
 import { completeSnapshot, EMPTY_SNAPSHOT, environmentOf } from './snapshot.js';
 import type { FlagSnapshot } from './snapshot.js';
 
 export interface ClientErrorInfo {
-  readonly operation: 'load' | 'close' | 'impression';
+  readonly operation: 'load' | 'close' | 'impression' | 'store';
   readonly provider: string;
 }
 
@@ -99,6 +99,7 @@ export class FeatureFlagClient {
   #environment: EvaluationEnvironment = environmentOf(EMPTY_SNAPSHOT);
   #ready = false;
   #loadInFlight: Promise<LoadOutcome> | undefined;
+  readonly #loadContext: ProviderLoadContext = { reportError: this.#report.bind(this) };
 
   constructor(options: FeatureFlagClientOptions) {
     this.#provider = options.provider;
@@ -202,7 +203,8 @@ export class FeatureFlagClient {
     const isFirstLoad = !this.#ready;
 
     try {
-      const loaded = await this.#provider.load(isFirstLoad ? undefined : this.#snapshot);
+      const previous = isFirstLoad ? undefined : this.#snapshot;
+      const loaded = await this.#provider.load(previous, this.#loadContext);
       if (loaded === null) {
         // `null` means "unchanged since the snapshot I gave you". On the first
         // load nothing was handed over to be unchanged from, so there is no
