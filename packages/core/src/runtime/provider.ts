@@ -8,6 +8,7 @@
 
 import type { FlagDefinition } from '../model/flag.js';
 import type { Segment, SegmentDefinition } from '../model/segment.js';
+import type { FlagParseIssue } from '../parsing/primitives.js';
 import { createSnapshot } from './snapshot.js';
 import type { FlagSnapshot, SnapshotMeta } from './snapshot.js';
 
@@ -15,6 +16,11 @@ import type { FlagSnapshot, SnapshotMeta } from './snapshot.js';
 export interface ProviderLoadContext {
   /** Reports a failure that did not stop the load, such as an outage covered by a fallback. */
   readonly reportError: (error: unknown, operation: 'load' | 'store') => void;
+  /**
+   * Reports the issues from parsing a ruleset, an empty list for a clean parse.
+   * Feeds `status().lastParseIssueCount`.
+   */
+  readonly reportParseIssues?: (issues: readonly FlagParseIssue[]) => void;
 }
 
 export interface FlagProvider {

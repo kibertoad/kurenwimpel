@@ -43,3 +43,25 @@ export function reportRetainedHeap(label: string, build: () => unknown): void {
     bytes === undefined ? 'unavailable (needs --expose-gc)' : `${(bytes / MIB).toFixed(2)} MiB`;
   console.log(`retained heap | ${label} | ${shown}`);
 }
+
+/**
+ * Average bytes allocated per call of `run`, read as heap growth with no
+ * collection in between. Keep `calls` small enough that the young generation
+ * does not fill up mid-run, or a scavenge hides part of the growth.
+ */
+export function allocatedBytesPerCall(run: () => void, calls: number): number | undefined {
+  const gc = collector();
+  if (gc === undefined) return undefined;
+  gc();
+  const before = heapUsed();
+  for (let call = 0; call < calls; call += 1) run();
+  return (heapUsed() - before) / calls;
+}
+
+/** Prints one line per measurement, in the shape the CI comment shows. */
+export function reportAllocation(label: string, run: () => void, calls: number): void {
+  const bytes = allocatedBytesPerCall(run, calls);
+  const shown =
+    bytes === undefined ? 'unavailable (needs --expose-gc)' : `${bytes.toFixed(1)} B per call`;
+  console.log(`allocated heap | ${label} | ${shown}`);
+}

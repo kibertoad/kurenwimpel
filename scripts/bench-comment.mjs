@@ -8,7 +8,7 @@ import { stripVTControlCharacters } from 'node:util';
 const MARKER = '<!-- kurenwimpel-bench -->';
 
 const TURBO_PREFIX = /^@kurenwimpel\/(?<pkg>[\w-]+):bench: ?/u;
-const KEEP = [/^\s*✓ /u, /^\s+name\s/u, /^\s+· /u, /^retained heap \|/u];
+const KEEP = [/^\s*✓ /u, /^\s+name\s/u, /^\s+· /u, /^(?:retained|allocated) heap \|/u];
 
 function sections(log) {
   const byPackage = new Map();
