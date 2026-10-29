@@ -186,7 +186,7 @@ describe('WorkerFlags', () => {
     expect(client.getBoolean('new-checkout', false)).toBe(false);
   });
 
-  it('retries the initial load on the next request after a failure', async () => {
+  it('rethrows a failed initial load under onInitFailure: throw', async () => {
     await seed(ruleset, 'rev-1');
     vi.spyOn(env.FLAGS, 'getWithMetadata').mockRejectedValueOnce(new Error('KV unavailable'));
 
@@ -194,6 +194,8 @@ describe('WorkerFlags', () => {
     const flags = new WorkerFlags({
       provider: new KvFlagProvider({ namespace: env.FLAGS }),
       onError,
+      onInitFailure: 'throw',
+      retryAfterMs: 0,
     });
 
     await expect(flags.get()).rejects.toThrow('KV unavailable');

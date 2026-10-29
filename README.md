@@ -326,6 +326,27 @@ Only the first request an isolate serves pays for a load. Later requests read th
 in-memory snapshot and hand any refresh to `ctx.waitUntil`, so it never sits on the
 response path.
 
+A failed first load does not fail the request. `get()` resolves to a client whose
+getters return the caller's default, and the next attempt waits `retryAfterMs`.
+To serve real flags through a KV outage instead, pass a ruleset bundled at build
+time as `bootstrap`:
+
+```ts
+import bootstrap from './flags.json';
+
+flags ??= new WorkerFlags({
+  provider: new KvFlagProvider({ namespace: env.FLAGS, timeoutMs: 500 }),
+  bootstrap,
+});
+```
+
+| Option                        | Default            | Effect                                                                                                                             |
+| ----------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `KvFlagProvider` `timeoutMs`  | `1000`             | Fails a KV read that takes longer. The read is abandoned, since KV's `get` takes no `AbortSignal`.                                 |
+| `WorkerFlags` `onInitFailure` | `'serve-defaults'` | `'throw'` makes `get()` reject while no snapshot has loaded, for services that would rather fail closed.                           |
+| `WorkerFlags` `retryAfterMs`  | `5000`             | Wait after a failed first load before the next request tries again; also the refresh interval while a fallback snapshot is served. |
+| `WorkerFlags` `bootstrap`     | none               | Raw ruleset installed with `origin: 'fallback'` when the first load fails.                                                         |
+
 Stamp `{ revision: string }` as the KV metadata when writing the ruleset — the
 provider uses it to skip re-parsing an unchanged payload.
 
@@ -350,6 +371,15 @@ fails.
   reported through `onError` with operation `'store'` and never fails a load.
   A stored ruleset has no age limit, so alert on `origin` if an old kill switch
   must not come back after a long outage.
+- On **Workers**, `WorkerFlags` never lets that first load fail a request. A
+  failed cold load is reported through `onError` once, `get()` resolves to the
+  not-ready client (its getters answer with the caller's default and
+  `PROVIDER_NOT_READY`), and requests skip the load until `retryAfterMs` has
+  passed instead of each paying for a KV round trip. With `bootstrap` set, that
+  ruleset is served as an `origin: 'fallback'` snapshot instead, and is refreshed
+  every `retryAfterMs` until a live load replaces it. `onInitFailure: 'throw'`
+  rejects `get()` instead when there is no bootstrap. A KV read slower than the
+  provider's `timeoutMs` counts as a failed load.
 - **Refreshes** are lenient: failures go to `onError` and the previous snapshot
   keeps serving.
 - A **malformed flag or segment** is dropped and reported through
