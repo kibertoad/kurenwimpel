@@ -9,6 +9,7 @@ import { statusOf, toOfrepEntry } from './results.js';
 export interface RouteDeps {
   readonly client: () => Promise<FeatureFlagClient>;
   readonly bulkFilter: ((flag: FlagDefinition) => boolean) | undefined;
+  readonly eventStream: EventStream | undefined;
 }
 
 /**
@@ -22,8 +23,25 @@ export interface OfrepRoute {
   handle(request: Request, params: Readonly<Record<string, string>>): Promise<Response>;
 }
 
+/** The `eventStreams` entry the bulk route advertises. */
+export interface EventStreamAdvertisement {
+  readonly type: string;
+  readonly endpoint: { readonly requestUri: string };
+  readonly inactivityDelaySec: number;
+}
+
+export interface EventStream {
+  readonly route: OfrepRoute;
+  readonly advertisement: EventStreamAdvertisement;
+}
+
 export function buildRoutes(basePath: string, deps: RouteDeps): OfrepRoute[] {
-  return [bulkRoute(`${basePath}${OFREP_EVALUATE_PATH}`, deps), flagRoute(basePath, deps)];
+  // The stream comes first so a configured path under the flag prefix still reaches it.
+  return [
+    ...(deps.eventStream === undefined ? [] : [deps.eventStream.route]),
+    bulkRoute(`${basePath}${OFREP_EVALUATE_PATH}`, deps),
+    flagRoute(basePath, deps),
+  ];
 }
 
 function flagRoute(basePath: string, deps: RouteDeps): OfrepRoute {
@@ -90,7 +108,10 @@ function bulkRoute(path: string, deps: RouteDeps): OfrepRoute {
         return flag !== undefined && bulkFilter(flag);
       });
 
-      return jsonResponse(200, { flags: results.map((result) => toOfrepEntry(result)) }, { etag });
+      const advertised = deps.eventStream?.advertisement;
+      const eventStreams = advertised === undefined ? {} : { eventStreams: [advertised] };
+      const flagEntries = results.map((result) => toOfrepEntry(result));
+      return jsonResponse(200, { flags: flagEntries, ...eventStreams }, { etag });
     },
   };
 }

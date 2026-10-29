@@ -6,7 +6,13 @@
 export { createOfrepHandler } from './handler.js';
 export type {
   OfrepAuthorization,
+  OfrepEventStreamOptions,
   OfrepHandler,
   OfrepHandlerOptions,
   OfrepRejection,
 } from './options.js';
+export {
+  DEFAULT_EVENT_STREAM_PATH,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_VERSION_CHECK_INTERVAL_MS,
+} from './stream-route.js';

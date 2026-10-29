@@ -38,6 +38,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@kurenwimpel/node": "workspace:^",
     "@openfeature/ofrep-provider": "^0.2.5",
     "@openfeature/server-sdk": "^1.23.0",
     "@stryker-mutator/core": "^10.0.0",

@@ -26,8 +26,24 @@ export interface OfrepHandlerOptions {
   readonly bulkFilter?: (flag: FlagDefinition) => boolean;
   /** Prefix in front of `/ofrep/v1`, for a handler mounted below the root. */
   readonly basePath?: string;
-  /** Receives every error that became a 500. The response body never carries it. */
+  /**
+   * Receives every error that became a 500, and failures reading the client
+   * while change streams are open. The response body never carries it.
+   */
   readonly onError?: (error: Error) => void;
+  /** Serves an SSE change stream and advertises it in bulk responses. Off when absent. */
+  readonly eventStream?: OfrepEventStreamOptions;
+}
+
+export interface OfrepEventStreamOptions {
+  /** Path of the SSE route, below `basePath`. Defaults to `/ofrep/v1/event-stream`. */
+  readonly path?: string;
+  /** Advertised to providers as `inactivityDelaySec`. Defaults to 120. */
+  readonly inactivityDelaySec?: number;
+  /** Gap between comment heartbeats; shorter than `inactivityDelaySec`. Defaults to 30 s. */
+  readonly heartbeatIntervalMs?: number;
+  /** How often an open stream compares the client's snapshot version. Defaults to 250 ms. */
+  readonly versionCheckIntervalMs?: number;
 }
 
 export type OfrepHandler = (request: Request) => Promise<Response>;

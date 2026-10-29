@@ -45,14 +45,25 @@ async function bridge(
     if (typeof value === 'string') headers.set(name, value);
   }
 
+  const disconnected = new AbortController();
+  res.on('close', () => {
+    disconnected.abort();
+  });
   const response = await handler(
     new Request(`http://${req.headers.host ?? 'localhost'}${req.url ?? '/'}`, {
       method: req.method ?? 'GET',
       headers,
+      signal: disconnected.signal,
       ...(chunks.length === 0 ? {} : { body: Buffer.concat(chunks) }),
     }),
   );
 
   res.writeHead(response.status, Object.fromEntries(response.headers));
-  res.end(Buffer.from(await response.arrayBuffer()));
+  if (response.body === null) {
+    res.end();
+    return;
+  }
+  // Streamed chunk by chunk so an event stream reaches the socket as it is written.
+  for await (const chunk of response.body) res.write(chunk);
+  res.end();
 }

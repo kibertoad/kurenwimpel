@@ -7,12 +7,15 @@ import type { FlagSnapshot } from '@kurenwimpel/core';
  * a newer body with an older tag, which costs one refetch and never serves stale flags.
  */
 export async function bulkEtag(snapshot: FlagSnapshot, context: unknown): Promise<string> {
-  // Without a control-plane revision, the load time is the only identity a snapshot has.
-  const identity = snapshot.version ?? snapshot.fetchedAt;
-  const input = new TextEncoder().encode(canonicalJson([identity, context]));
+  const input = new TextEncoder().encode(canonicalJson([snapshotIdentity(snapshot), context]));
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
   const hex = Array.from(digest.subarray(0, 16), (byte) => byte.toString(16).padStart(2, '0'));
   return `"${hex.join('')}"`;
+}
+
+/** Without a control-plane revision, the load time is the only identity a snapshot has. */
+export function snapshotIdentity(snapshot: FlagSnapshot): string | number {
+  return snapshot.version ?? snapshot.fetchedAt;
 }
 
 /** Whether an `If-None-Match` header names this tag. Weak tags compare by their opaque part. */
