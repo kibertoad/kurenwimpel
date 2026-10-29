@@ -4,7 +4,9 @@ Decisions that shaped `@kurenwimpel/core`, with the alternatives that were
 considered and rejected. Each record is written against what LaunchDarkly,
 Split (Harness FME), and Flagsmith actually do — verified from their SDK and
 engine sources, not from marketing pages — so "we deviate from X here" is a
-statement about code, and the deviation is deliberate.
+statement about code, and the deviation is deliberate. 0009 is the exception: it
+is about `@kurenwimpel/ofrep`, and the deviations it discusses are from the OFREP
+document itself.
 
 | ADR                                            | Decision                                                                 |
 | ---------------------------------------------- | ------------------------------------------------------------------------ |
@@ -16,6 +18,7 @@ statement about code, and the deviation is deliberate.
 | [0006](0006-prerequisites.md)                  | Prerequisites re-evaluate the dependency, fail closed, off on failure    |
 | [0007](0007-experimentation-primitives.md)     | Impressions are a synchronous hook; seeds and bucketBy live on the split |
 | [0008](0008-operator-set.md)                   | Semver operators in, regex and date operators out                        |
+| [0009](0009-vendored-ofrep-spec.md)            | The OFREP contract is grounded on a vendored copy of the document        |
 
 The evaluation pipeline the records collectively describe, in order:
 
