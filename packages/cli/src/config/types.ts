@@ -11,6 +11,8 @@ export interface EnvironmentConfig {
   readonly target: TargetConfig;
   /** The ruleset document, relative to the config file. Defaults to `<env>.json`. */
   readonly ruleset?: string;
+  /** Changes to apply at a set time, relative to the config file. Defaults to `<env>.schedule.json`. */
+  readonly schedule?: string;
   /** CODEOWNERS owners, one of whom must approve a change: `@org/team`, `@user` or an email. */
   readonly approvers?: readonly string[];
 }

@@ -22,9 +22,23 @@ export async function readText(io: CliIo, path: string): Promise<string> {
   try {
     text = await io.readFile(path);
   } catch (error) {
-    throw new UsageError(`cannot read ${path}: ${messageOf(error)}`);
+    throw new UsageError(`cannot read ${path}: ${messageOf(error)}`, { cause: error });
   }
   return text.startsWith('﻿') ? text.slice(1) : text;
+}
+
+/** Like {@link readText}, but `undefined` when the file does not exist. */
+export async function readTextIfPresent(io: CliIo, path: string): Promise<string | undefined> {
+  try {
+    return await readText(io, path);
+  } catch (error) {
+    if (error instanceof UsageError && isMissing(error.cause)) return undefined;
+    throw error;
+  }
+}
+
+function isMissing(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 export function parseJson(text: string, source: string): unknown {

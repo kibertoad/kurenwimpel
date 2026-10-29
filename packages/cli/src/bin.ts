@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 import { run } from './cli.js';
 
@@ -11,6 +11,7 @@ process.exitCode = await run(process.argv.slice(2), {
     process.stderr.write(text);
   },
   readFile: (path) => readFile(path, 'utf8'),
+  writeFile: (path, text) => writeFile(path, text, 'utf8'),
   env: process.env,
   fetch: globalThis.fetch,
   now: () => new Date(),

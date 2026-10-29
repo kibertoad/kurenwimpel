@@ -33,10 +33,21 @@ describe('kurenwimpel envs', () => {
         {
           name: 'production',
           ruleset: 'flags/production.json',
+          schedule: 'flags/production.schedule.json',
           approvers: ['@acme/flags-production', 'ops@acme.test'],
         },
-        { name: 'staging', ruleset: 'flags/stage.json', approvers: [] },
-        { name: 'development', ruleset: 'flags/development.json', approvers: [] },
+        {
+          name: 'staging',
+          ruleset: 'flags/stage.json',
+          schedule: 'flags/staging.schedule.json',
+          approvers: [],
+        },
+        {
+          name: 'development',
+          ruleset: 'flags/development.json',
+          schedule: 'flags/development.schedule.json',
+          approvers: [],
+        },
       ],
     });
   });
@@ -66,9 +77,20 @@ describe('kurenwimpel envs', () => {
     expect(names(stdout)).toEqual(['production', 'staging', 'development']);
   });
 
-  it('prints CODEOWNERS lines for the environments with approvers', async () => {
+  it('prints CODEOWNERS lines for the ruleset and schedule of each environment with approvers', async () => {
     const { stdout } = await envs('--format', 'codeowners');
-    expect(stdout).toBe('/flags/production.json @acme/flags-production ops@acme.test\n');
+    expect(stdout).toBe(
+      [
+        '/flags/production.json @acme/flags-production ops@acme.test',
+        '/flags/production.schedule.json @acme/flags-production ops@acme.test',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('maps a changed schedule to its environment', async () => {
+    const { stdout } = await envs('-f', 'json', '--changed', 'flags/development.schedule.json');
+    expect(names(stdout)).toEqual(['development']);
   });
 
   it('refuses a CODEOWNERS path outside the working directory', async () => {

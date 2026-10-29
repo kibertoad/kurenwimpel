@@ -19,6 +19,8 @@ export interface CliIo {
   readonly stdout: (text: string) => void;
   readonly stderr: (text: string) => void;
   readonly readFile: (path: string) => Promise<string>;
+  /** Writes a repository file, such as the documents `schedule apply` rewrites. */
+  readonly writeFile: (path: string, text: string) => Promise<void>;
   /** The only source of credentials. */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly fetch: typeof fetch;

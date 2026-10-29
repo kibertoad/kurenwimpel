@@ -29,6 +29,12 @@ export { renderDiffMarkdown, renderDiffText } from './format/diff-format.js';
 export { loadRuleset } from './ruleset-file.js';
 export type { LoadedRuleset } from './ruleset-file.js';
 export type { EnvsReport } from './commands/envs.js';
+export type { ScheduleApplyReport } from './commands/schedule-apply.js';
+export type { ScheduledChange, ScheduleReport } from './schedule/report.js';
+export { parseSchedule } from './schedule/schedule-file.js';
+export type { ParsedSchedule, ScheduleEntry, ScheduleIssue } from './schedule/schedule-file.js';
+export { patchDocument, simulate } from './schedule/simulate.js';
+export type { ScheduleStep, Simulation } from './schedule/simulate.js';
 export { renderValidateGithub, renderValidateMarkdown } from './format/validate-format.js';
 export type { ValidatedText } from './format/validate-format.js';
 export { changedEnvironments, codeownersLines, listEnvironments } from './config/environments.js';
@@ -38,6 +44,7 @@ export {
   loadConfig,
   parseConfig,
   resolveRuleset,
+  resolveSchedule,
   resolveTarget,
 } from './config/load-config.js';
 export type { LoadedConfig } from './config/load-config.js';

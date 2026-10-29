@@ -52,19 +52,35 @@ export function renderValidateMarkdown(files: readonly ValidatedText[]): string 
  * annotation on the file, and on the line of the definition when it can be found.
  */
 export function renderValidateGithub(files: readonly ValidatedText[]): string {
-  const lines: string[] = [];
-  for (const file of files) {
-    for (const issue of file.issues) {
-      const line = lineOf(file.text, issue);
-      const properties = [
-        `file=${property(file.path.replaceAll('\\', '/'))}`,
-        ...(line === undefined ? [] : [`line=${line}`]),
-        `title=${property(`kurenwimpel: ${issue.at}`)}`,
-      ];
-      lines.push(`::error ${properties.join(',')}::${data(issue.message)}`);
-    }
-  }
-  return lines.map((line) => `${line}\n`).join('');
+  return files
+    .flatMap((file) =>
+      file.issues.map((issue) =>
+        errorCommand({
+          path: file.path,
+          line: lineOf(file.text, issue),
+          title: `kurenwimpel: ${issue.at}`,
+          message: issue.message,
+        }),
+      ),
+    )
+    .join('');
+}
+
+export interface Annotation {
+  readonly path: string;
+  readonly line: number | undefined;
+  readonly title: string;
+  readonly message: string;
+}
+
+/** One `::error` workflow command, with its newline. */
+export function errorCommand(annotation: Annotation): string {
+  const properties = [
+    `file=${property(annotation.path.replaceAll('\\', '/'))}`,
+    ...(annotation.line === undefined ? [] : [`line=${annotation.line}`]),
+    `title=${property(annotation.title)}`,
+  ];
+  return `::error ${properties.join(',')}::${data(annotation.message)}\n`;
 }
 
 /**
@@ -86,7 +102,7 @@ export function lineOf(text: string, issue: FlagParseIssue): number | undefined 
   return undefined;
 }
 
-function escapeRegExp(text: string): string {
+export function escapeRegExp(text: string): string {
   return text.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
 }
 

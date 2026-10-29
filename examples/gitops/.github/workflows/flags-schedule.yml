@@ -1,0 +1,94 @@
+name: Flags schedule
+
+# Applies the schedule entries that are due, commits the result to main with the
+# entry ids in the message, and publishes the changed environments. A push made
+# with GITHUB_TOKEN starts no other workflow, so this one calls flags.yml itself.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: flags-schedule
+  cancel-in-progress: false
+
+env:
+  CONFIG: flags/kurenwimpel.config.json
+
+jobs:
+  apply:
+    name: apply due entries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      environments: ${{ steps.apply.outputs.environments }}
+      commit: ${{ steps.commit.outputs.commit }}
+    steps:
+      # Keeps the token in the checkout, for the push.
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+
+      - uses: ./.github/actions/setup-kurenwimpel
+        with:
+          version: latest
+
+      # One cut-off time for every environment, so a run applies a consistent set.
+      # An environment whose entries have issues fails the run without holding
+      # back the others.
+      - name: Apply the due entries
+        id: apply
+        run: |
+          now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          environments='[]'
+          failed=false
+          : > "$RUNNER_TEMP/applied.txt"
+          while IFS= read -r environment; do
+            if ! report=$(kurenwimpel schedule apply "$environment" --config "$CONFIG" --now "$now" --format json); then
+              echo "::error title=Schedule of $environment not applied::Fix the entries named in the log. Nothing in $environment was changed."
+              failed=true
+              continue
+            fi
+            if [ "$(jq '.applied | length' <<< "$report")" != 0 ]; then
+              environments=$(jq -c --arg name "$environment" '. + [$name]' <<< "$environments")
+              jq -r --arg name "$environment" '.applied[] | "\($name): \(.id)"' <<< "$report" >> "$RUNNER_TEMP/applied.txt"
+            fi
+          done < <(kurenwimpel envs --config "$CONFIG" --format json | jq -r '.environments[].name')
+          { echo "environments=$environments"; echo "failed=$failed"; } >> "$GITHUB_OUTPUT"
+
+      # A push rejected because main moved fails this run; the next one starts
+      # from the new main and applies the same entries.
+      - name: Commit to main
+        id: commit
+        if: steps.apply.outputs.environments != '[]'
+        run: |
+          ids=$(cut -d ' ' -f 2 "$RUNNER_TEMP/applied.txt" | paste -s -d ',' - | sed 's/,/, /g')
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          { echo "Apply scheduled flag changes: $ids"; echo; cat "$RUNNER_TEMP/applied.txt"; } \
+            | git commit --all --quiet --file -
+          git push origin HEAD:main
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Fail on entries with issues
+        if: steps.apply.outputs.failed == 'true'
+        run: exit 1
+
+  publish:
+    name: publish
+    needs: apply
+    if: always() && needs.apply.outputs.commit != ''
+    # The ceiling for every job in flags.yml, including the pull request check
+    # that does not run here.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/flags.yml
+    with:
+      config: flags/kurenwimpel.config.json
+      cli-version: latest
+      environments: ${{ needs.apply.outputs.environments }}
+      ref: ${{ needs.apply.outputs.commit }}

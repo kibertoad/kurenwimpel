@@ -155,18 +155,67 @@ CI workflow uses to decide which environments a change touches:
 git diff --name-only -z origin/main...HEAD | xargs -0 kurenwimpel envs --changed --format json
 ```
 
-- With `--changed`, only the environments whose ruleset is among the files are
-  listed. A change to the config itself lists every environment, since it may point
-  any of them at another target. No files lists none.
+- With `--changed`, only the environments whose ruleset or schedule is among the
+  files are listed. A change to the config itself lists every environment, since it
+  may point any of them at another target. No files lists none.
 - Paths are compared and printed relative to the working directory, so run it from
   the repository root, as `git diff --name-only` prints them.
-- `--format codeowners` prints one [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
-  line per environment that has `approvers`, such as
-  `/flags/production.json @acme/flags-production`.
+- `--format codeowners` prints [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+  lines for the ruleset and the schedule of each environment that has `approvers`,
+  such as `/flags/production.json @acme/flags-production`.
+
+## `schedule`
+
+```sh
+kurenwimpel schedule validate production [--config <path>] [--format text|json|markdown|github]
+kurenwimpel schedule apply production [--now <iso>] [--config <path>] [--format text|json]
+```
+
+Changes that take effect at a set time live in the environment's schedule file,
+`<env>.schedule.json` next to the config unless the config names another. It holds
+an array of entries:
+
+```json
+[
+  {
+    "id": "checkout-ramp-50",
+    "at": "2026-11-03T09:00:00Z",
+    "flag": "new-checkout",
+    "set": { "allocation": { "percent": 50 } }
+  }
+]
+```
+
+| Field  | Meaning                                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `id`   | Unique in the file. Letters, digits, `.`, `_` and `-`, so it can go into a commit message as is.                          |
+| `at`   | When the entry is due: an ISO 8601 date and time with a UTC offset (`Z` or `+01:00`). A time without one is rejected.     |
+| `flag` | The key of the flag to change.                                                                                            |
+| `set`  | A shallow patch: each field replaces the flag's top-level field of that name, and `null` removes it. `key` cannot be set. |
+
+Evaluation reads no clock, so the clock lives here instead (see
+[ADR 0008](../../docs/adr/0008-operator-set.md)): at the set time the ruleset document
+itself changes, and every runtime serves the same thing.
+
+`validate` applies every entry to the ruleset in time order, entries with the same
+time in file order, and parses the result after each one, since each intermediate
+state is served for a while. It exits 1 when an entry cannot be read or would add a
+parse issue, so a scheduled change that would break the ruleset fails the pull
+request that adds it. It also fails when a later edit to the ruleset breaks an entry
+that was fine. `--format markdown` prints a pull request comment section with what
+each pending entry does to its flag, in the terms `diff` uses, and prints nothing
+when the environment has no schedule. `--format github` annotates each issue on the
+line of the entry's id.
+
+`apply` applies the entries due at `--now`, which defaults to the current time,
+writes the ruleset, and removes those entries from the schedule. With nothing due
+it writes nothing. When any entry has an issue it writes nothing and exits 1. The
+ruleset is written as JSON indented by two spaces, so a formatter that lays it out
+differently shows the whole file as changed.
 
 ## Configuration
 
-`publish`, `rollback`, `revisions` and `envs` read `kurenwimpel.config.json` from
+`publish`, `rollback`, `revisions`, `envs` and `schedule` read `kurenwimpel.config.json` from
 the working directory, or the file `--config` names. It maps each environment to the
 target it publishes to, and optionally to its ruleset and approvers:
 
@@ -188,11 +237,12 @@ target it publishes to, and optionally to its ruleset and approvers:
 }
 ```
 
-| Field       | Default                                                                                                                                                                                            |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `target`    | required, see below                                                                                                                                                                                |
-| `ruleset`   | `<env>.json`. The document `publish` publishes when no file is named, and the one `envs --changed` watches. Relative to the config file.                                                           |
-| `approvers` | none. CODEOWNERS owners (`@org/team`, `@user` or an email), one of whom must approve a change to the ruleset. `envs --format codeowners` prints the lines; GitHub branch protection enforces them. |
+| Field       | Default                                                                                                                                                                                                        |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `target`    | required, see below                                                                                                                                                                                            |
+| `ruleset`   | `<env>.json`. The document `publish` publishes when no file is named, and the one `envs --changed` watches. Relative to the config file.                                                                       |
+| `schedule`  | `<env>.schedule.json`. The [schedule](#schedule) of the environment, which need not exist. Relative to the config file.                                                                                        |
+| `approvers` | none. CODEOWNERS owners (`@org/team`, `@user` or an email), one of whom must approve a change to the ruleset or schedule. `envs --format codeowners` prints the lines; GitHub branch protection enforces them. |
 
 Each target type takes these fields:
 
@@ -239,11 +289,11 @@ A missing variable fails the command with exit code 2 before anything is written
 
 ## Exit codes
 
-| Code | Meaning                                                                                                                                                                                                                                                |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `publish` published or found nothing to write; `rollback`, `revisions` and `envs` ran.                             |
-| `1`  | Findings. `validate` found an issue in some file; `diff --exit-code` found a change; `eval` returned an error code for some flag; `publish` refused a ruleset with parse issues.                                                                       |
-| `2`  | The command could not run: unknown command or option, wrong number of files, an unreadable file, an input that is not JSON, an invalid config, a missing credential, a payload over the size limit, a target that failed, no revision to roll back to. |
+| Code | Meaning                                                                                                                                                                                                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | Success. `validate` found no issue; `diff` ran (whether or not anything changed); `eval` resolved every flag without an error code; `publish` published or found nothing to write; `rollback`, `revisions` and `envs` ran; `schedule validate` found no issue; `schedule apply` applied the due entries or found none. |
+| `1`  | Findings. `validate` found an issue in some file; `diff --exit-code` found a change; `eval` returned an error code for some flag; `publish` refused a ruleset with parse issues; `schedule` found an entry with an issue, and `apply` wrote nothing.                                                                   |
+| `2`  | The command could not run: unknown command or option, wrong number of files, an unreadable file, an input that is not JSON, an invalid config, a missing credential, a payload over the size limit, a target that failed, no revision to roll back to.                                                                 |
 
 ## JSON output
 
@@ -381,8 +431,18 @@ on a first publish.
 `rolled-back` or `unchanged`. `revisions` prints `{ "environment", "revisions" }`,
 each revision `{ "revision", "publishedAt", "current" }`, newest first.
 
-`envs` prints `{ "environments" }`, each `{ "name", "ruleset", "approvers" }` in
-config order, with `approvers` empty when the config names none.
+`envs` prints `{ "environments" }`, each `{ "name", "ruleset", "schedule", "approvers" }`
+in config order, with `approvers` empty when the config names none.
+
+`schedule validate` prints `{ "environment", "schedule", "valid", "issues", "entries" }`.
+`issues` lists the entries that cannot be read, each `{ "entry", "message" }`, where
+`entry` is the id, `[<index>]` for an entry without a usable one, or `$` for the file.
+`entries` lists the readable ones in the order they take effect, each with its own
+fields plus `changes`, in the shape `diff` prints, and the parse `issues` it would add.
+
+`schedule apply` prints `{ "environment", "now", "status", "applied", "pending", "issues" }`,
+with `status` `applied`, `nothing-due` or `refused`, `applied` the entries applied in
+order, and `pending` the number left in the schedule.
 
 ## Programmatic use
 
