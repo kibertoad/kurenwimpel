@@ -91,10 +91,16 @@ export interface CliOutcome {
   readonly stderr: string;
 }
 
-/** Runs the CLI in memory. `files` maps a path to its parsed content, or to raw text. */
+export type IoOverrides = Partial<Pick<CliIo, 'env' | 'fetch' | 'now'>>;
+
+/**
+ * Runs the CLI in memory. `files` maps a path to its parsed content, or to raw
+ * text. The network refuses every request unless `overrides.fetch` is given.
+ */
 export async function runCli(
   argv: readonly string[],
   files: Readonly<Record<string, unknown>> = {},
+  overrides: IoOverrides = {},
 ): Promise<CliOutcome> {
   let stdout = '';
   let stderr = '';
@@ -110,6 +116,10 @@ export async function runCli(
       const content = files[path];
       return Promise.resolve(typeof content === 'string' ? content : JSON.stringify(content));
     },
+    env: {},
+    fetch: () => Promise.reject(new Error('no network in tests')),
+    now: () => new Date('2026-01-01T00:00:00.000Z'),
+    ...overrides,
   };
   const code = await run(argv, io);
   return { code, stdout, stderr };

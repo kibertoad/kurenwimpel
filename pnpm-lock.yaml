@@ -44,6 +44,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@kurenwimpel/cloudflare':
+        specifier: workspace:^
+        version: link:../cloudflare
       '@kurenwimpel/core':
         specifier: workspace:^
         version: link:../core

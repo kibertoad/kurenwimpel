@@ -1,7 +1,7 @@
 {
   "name": "@kurenwimpel/cli",
   "version": "0.0.0",
-  "description": "Command line tool to validate, diff and explain kurenwimpel rulesets.",
+  "description": "Command line tool to validate, diff, explain and publish kurenwimpel rulesets.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -36,6 +36,7 @@
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {
+    "@kurenwimpel/cloudflare": "workspace:^",
     "@kurenwimpel/core": "workspace:^"
   },
   "devDependencies": {

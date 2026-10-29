@@ -20,6 +20,10 @@
       "types": "./dist/index.d.ts",
       "workerd": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./kv-layout": {
+      "types": "./dist/kv-layout.d.ts",
+      "default": "./dist/kv-layout.js"
     }
   },
   "publishConfig": {

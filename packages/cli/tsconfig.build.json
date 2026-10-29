@@ -10,5 +10,8 @@
     "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core/tsconfig.build.json" }]
+  "references": [
+    { "path": "../core/tsconfig.build.json" },
+    { "path": "../cloudflare/tsconfig.build.json" }
+  ]
 }
