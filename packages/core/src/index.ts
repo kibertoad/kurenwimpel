@@ -87,7 +87,7 @@ export type {
 export type { ImpressionEvent } from './runtime/impressions.js';
 export { CountingMetrics } from './runtime/metrics.js';
 export type { EvaluationCount, MetricsSink } from './runtime/metrics.js';
-export type { ClientStatus } from './runtime/status.js';
+export type { ClientListener, ClientStatus, LoadResult } from './runtime/status.js';
 export { StaticProvider } from './runtime/provider.js';
 export type {
   FlagProvider,

@@ -1,6 +1,7 @@
 /**
  * Load health: what `FeatureFlagClient.status()` reports about freshness and
- * failures, tracked apart from the client so the evaluation code stays small.
+ * failures, and the listeners told about each load, tracked apart from the
+ * client so the evaluation code stays small.
  */
 
 import type { FlagSnapshot, SnapshotOrigin } from './snapshot.js';
@@ -30,14 +31,36 @@ export interface ClientStatus {
 
 export type LoadResult = 'installed' | 'unchanged' | 'failed';
 
-/** Mutable counters behind {@link ClientStatus}. */
+/**
+ * Mutable counters behind {@link ClientStatus}, and the listeners told about
+ * each load and install. A throwing listener is handed to `report` and skipped.
+ */
 export class LoadHealth {
+  readonly #listeners = new Set<ClientListener>();
+  readonly #report: (error: unknown) => void;
   #lastSuccessAt: number | undefined;
   #lastFailureAt: number | undefined;
   #consecutiveFailures = 0;
   #totalFailures = 0;
   #parseIssues = 0;
   #pendingParseIssues: number | undefined;
+
+  constructor(report: (error: unknown) => void) {
+    this.#report = report;
+  }
+
+  subscribe(listener: ClientListener): () => void {
+    this.#listeners.add(listener);
+    return () => {
+      this.#listeners.delete(listener);
+    };
+  }
+
+  snapshotChanged(snapshot: FlagSnapshot, previous: FlagSnapshot | undefined): void {
+    this.#notify((listener) => {
+      listener.onSnapshotChange?.(snapshot, previous);
+    });
+  }
 
   /** Called when a load starts, so issues reported during it can be told apart from older ones. */
   startLoad(): void {
@@ -48,8 +71,16 @@ export class LoadHealth {
     this.#pendingParseIssues = (this.#pendingParseIssues ?? 0) + count;
   }
 
-  /** A fallback snapshot counts as a failure: the live source did not answer. */
+  /** Records the outcome, then tells the listeners, so they see it in `status()`. */
   finishLoad(result: LoadResult, origin: SnapshotOrigin): void {
+    this.#record(result, origin);
+    this.#notify((listener) => {
+      listener.onLoad?.(result);
+    });
+  }
+
+  /** A fallback snapshot counts as a failure: the live source did not answer. */
+  #record(result: LoadResult, origin: SnapshotOrigin): void {
     if (result === 'installed' && this.#pendingParseIssues !== undefined) {
       this.#parseIssues = this.#pendingParseIssues;
     }
@@ -69,6 +100,16 @@ export class LoadHealth {
     this.#consecutiveFailures = 0;
   }
 
+  #notify(call: (listener: ClientListener) => void): void {
+    for (const listener of this.#listeners) {
+      try {
+        call(listener);
+      } catch (error) {
+        this.#report(error);
+      }
+    }
+  }
+
   status(snapshot: FlagSnapshot, ready: boolean): ClientStatus {
     return {
       ready,
@@ -82,4 +123,20 @@ export class LoadHealth {
       lastParseIssueCount: this.#parseIssues,
     };
   }
+}
+
+/**
+ * Observes a client that someone else constructed, which the
+ * `onSnapshotChange` option cannot reach. Register with
+ * `FeatureFlagClient.subscribe`.
+ */
+export interface ClientListener {
+  /** Same contract as the `onSnapshotChange` option. */
+  readonly onSnapshotChange?: (snapshot: FlagSnapshot, previous: FlagSnapshot | undefined) => void;
+  /**
+   * Called once per trip to the provider, after `status()` reflects it. A
+   * fallback install arrives as `installed` and still counts as a failure in
+   * `status().consecutiveFailures`.
+   */
+  readonly onLoad?: (result: LoadResult) => void;
 }

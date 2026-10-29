@@ -15,7 +15,7 @@ import type { FlagProvider, ProviderLoadContext } from './provider.js';
 import { completeSnapshot, EMPTY_SNAPSHOT, environmentOf } from './snapshot.js';
 import type { FlagSnapshot } from './snapshot.js';
 import { LoadHealth } from './status.js';
-import type { ClientStatus } from './status.js';
+import type { ClientListener, ClientStatus } from './status.js';
 
 /**
  * The evaluation entry point.
@@ -46,7 +46,9 @@ export class FeatureFlagClient {
   readonly #onImpression: FeatureFlagClientOptions['onImpression'];
   readonly #onSnapshotChange: FeatureFlagClientOptions['onSnapshotChange'];
   readonly #metrics: FeatureFlagClientOptions['metrics'];
-  readonly #health = new LoadHealth();
+  readonly #health = new LoadHealth((error) => {
+    this.#report(error, 'listener');
+  });
 
   #snapshot: FlagSnapshot = EMPTY_SNAPSHOT;
   #environment: EvaluationEnvironment = environmentOf(EMPTY_SNAPSHOT);
@@ -72,6 +74,16 @@ export class FeatureFlagClient {
   /** Freshness and failure counters, for readiness probes and staleness alerts. */
   status(): ClientStatus {
     return this.#health.status(this.#snapshot, this.#ready);
+  }
+
+  /**
+   * Registers a listener for snapshot changes and load outcomes, for code that
+   * wraps a client it did not construct.
+   *
+   * @returns a function that removes the listener.
+   */
+  subscribe(listener: ClientListener): () => void {
+    return this.#health.subscribe(listener);
   }
 
   /** True once a snapshot has been loaded at least once. */
@@ -229,6 +241,7 @@ export class FeatureFlagClient {
     } catch (error) {
       this.#report(error, 'snapshotChange');
     }
+    this.#health.snapshotChanged(this.#snapshot, previous);
   }
 
   getBoolean(key: string, defaultValue: boolean, context?: EvaluationContext): boolean {
