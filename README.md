@@ -21,8 +21,9 @@ extended the plates with carved scenes of home: houses, churches, trees, boats,
 elks. The vanes are now the emblem of the Curonian Spit and are still made in
 Nida and Klaipėda.
 
-A flag that tells you at a glance which rules apply to whoever carries it seemed
-a fitting name for a feature flag library.
+A feature flag does the same job in a service. The vane told an inspector which
+rules applied to the boat that carried it; a flag tells the code which behaviour
+applies to the request, user or tenant in front of it.
 
 ## Layout
 
