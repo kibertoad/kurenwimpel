@@ -27,13 +27,14 @@ applies to the request, user or tenant in front of it.
 
 ## Layout
 
-| Package                   | Directory             | What it is                                                       |
-| ------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
-| `@kurenwimpel/cli`        | `packages/cli`        | The `kurenwimpel` command: validate, diff, explain and publish.  |
-| `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
-| `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
-| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
+| Package                               | Directory                         | What it is                                                        |
+| ------------------------------------- | --------------------------------- | ----------------------------------------------------------------- |
+| `@kurenwimpel/core`                   | `packages/core`                   | Runtime-agnostic engine. Zero dependencies, no platform globals.  |
+| `@kurenwimpel/cli`                    | `packages/cli`                    | The `kurenwimpel` command: validate, diff, explain and publish.   |
+| `@kurenwimpel/cloudflare`             | `packages/cloudflare`             | Workers wrapper: KV-backed provider, isolate-scoped client.       |
+| `@kurenwimpel/control-plane-contract` | `packages/control-plane-contract` | The control plane service API (ADR 0011). Private until it ships. |
+| `@kurenwimpel/node`                   | `packages/node`                   | Node wrapper: file and HTTP providers, polling client.            |
+| `@kurenwimpel/ofrep`                  | `packages/ofrep`                  | The OpenFeature remote evaluation protocol, as an API contract.   |
 
 Both wrappers re-export the core, so a service only ever imports one package.
 `@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
