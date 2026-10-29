@@ -31,8 +31,10 @@ cost: the event object is never built.
 There is no flag-level `trackEvents` toggle and no sampling knob in the core.
 `reason` and `metadata` carry everything a consumer needs to filter
 ("`SPLIT` and `NOT_ALLOCATED` on flags with an `experiment` metadata key"),
-and a filter is one line in the hook. The core cannot buffer or flush anyway
-— timers and network are platform concerns by charter.
+and a filter is one line in the hook. Timers and network are platform
+concerns by charter, so the core's share of delivery stops at
+`createImpressionBatcher`: deduplication and a bounded queue, flushed when a
+platform wrapper says so.
 
 **Assignment mechanics on the split**, in its object form:
 
@@ -61,9 +63,11 @@ the exposure points.
 
 ## Consequences
 
-- Wrappers choose their own delivery: a Node service batches to its analytics
-  pipeline on a timer; a Worker `ctx.waitUntil`s a fetch. The core stays
-  I/O-free and the hook contract is three lines to test.
+- Batching and deduplication live in the core's `createImpressionBatcher`,
+  which owns no timers. The wrappers schedule its flush: the Node client on an
+  interval timer, `WorkerFlags` through `ctx.waitUntil`. The consumer supplies
+  only the sink. The core stays I/O-free and the hook contract is three lines
+  to test.
 - Synchronous hooks put the consumer on the hot path. That is deliberate —
   push the queue to the platform layer — and the guard rails are "throwing is
   contained" plus "absent is free".
@@ -73,9 +77,10 @@ the exposure points.
 
 ## Alternatives rejected
 
-- **An event queue inside the core** (Split/LD style buffering with flush
-  intervals): needs timers, network, and shutdown hooks — all platform APIs
-  the core is forbidden to touch, and all policy the platforms disagree on.
+- **A self-flushing event queue inside the core** (Split/LD style buffering
+  with flush intervals): needs timers, network, and shutdown hooks. Those are
+  platform APIs the core is forbidden to touch, and policy the platforms
+  disagree on.
 - **Flag-level `trackEvents`** (LaunchDarkly): a second on/off system that
   silently eats data when misconfigured; filtering in the hook is explicit
   and lives next to the code that pays for the events.

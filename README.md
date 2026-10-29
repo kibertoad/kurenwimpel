@@ -199,6 +199,11 @@ which admits an account's users independently even where assignment clusters
 them. An experiment that has to take or leave whole accounts gives the gate the
 same attribute: `allocation: { percent: 20, bucketBy: "accountId" }`.
 
+Allocation, `seed`, `bucketBy` and impressions are the assignment half of an
+A/B test. The analysis half (metrics, statistics, stopping) is yours to build;
+[Running experiments](docs/experimentation.md) covers where that line sits, a
+reference warehouse pipeline, and the checks to run before reading a result.
+
 A **segment** is a named, reusable audience: explicit `included` / `excluded`
 key lists (compiled to hash sets, so a hundred-thousand-key list costs one
 probe) plus condition rules. Flags reference segments with the `inSegment` /
@@ -491,6 +496,10 @@ analysis built on them. For usage counts, use `CountingMetrics` (see
 `createImpressionBatcher(options)` from `@kurenwimpel/core` is the same batcher
 without the scheduling, for a custom wrapper: it returns `{ onImpression, flush,
 close, stats }`, and you pass its `onImpression` to the client.
+
+[Running experiments](docs/experimentation.md) turns this feed into an A/B test
+readout: a warehouse table for the events, first exposure per subject, and a
+sample ratio mismatch check.
 
 ## Failure behaviour
 
