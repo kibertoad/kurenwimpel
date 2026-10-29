@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/@kurenwimpel/core/schema/ruleset.schema.json",
+  "title": "kurenwimpel ruleset",
+  "description": "A ruleset as parseRuleset reads it: an array of flags, a key-to-flag object, or a document with flags and segments.",
+  "if": {
+    "type": "object",
+    "anyOf": [{ "required": ["flags"] }, { "required": ["segments"] }]
+  },
+  "then": { "$ref": "#/$defs/document" },
+  "else": { "$ref": "#/$defs/flagCollection" },
+  "$defs": {
+    "document": {
+      "type": "object",
+      "properties": {
+        "$schema": { "type": "string" },
+        "schemaVersion": {
+          "description": "The ruleset format this document is written for. Absent means 1.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "flags": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/flagCollection" }]
+        },
+        "segments": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/segmentCollection" }]
+        }
+      },
+      "additionalProperties": {
+        "description": "Envelope fields such as an etag are allowed. A value shaped like a collection of definitions is a misspelled flags or segments key.",
+        "not": { "$ref": "#/$defs/definitionLike" }
+      }
+    },
+    "definitionLike": {
+      "anyOf": [
+        { "$ref": "#/$defs/looksLikeDefinition" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/looksLikeDefinition" }
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "$ref": "#/$defs/looksLikeDefinition" }
+        }
+      ]
+    },
+    "looksLikeDefinition": {
+      "type": "object",
+      "required": ["key"],
+      "properties": { "key": { "type": "string" } },
+      "anyOf": [
+        { "required": ["variants"] },
+        { "required": ["defaultVariant"] },
+        { "required": ["offVariant"] },
+        { "required": ["enabled"] },
+        { "required": ["targets"] },
+        { "required": ["prerequisites"] },
+        { "required": ["allocation"] },
+        { "required": ["rollout"] },
+        { "required": ["rules"] },
+        { "required": ["included"] },
+        { "required": ["excluded"] }
+      ]
+    },
+    "flagCollection": {
+      "description": "An array of flags, or an object whose values are flags.",
+      "type": ["array", "object"],
+      "items": { "$ref": "#/$defs/flag" },
+      "additionalProperties": { "$ref": "#/$defs/flag" }
+    },
+    "segmentCollection": {
+      "description": "An array of segments, or an object whose values are segments.",
+      "type": ["array", "object"],
+      "items": { "$ref": "#/$defs/segment" },
+      "additionalProperties": { "$ref": "#/$defs/segment" }
+    },
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "optionalString": {
+      "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/nonEmptyString" }]
+    },
+    "stringList": { "type": "array", "items": { "type": "string" } },
+    "flag": {
+      "type": "object",
+      "required": ["key", "enabled", "variants", "defaultVariant", "offVariant"],
+      "properties": {
+        "key": { "$ref": "#/$defs/nonEmptyString" },
+        "enabled": {
+          "description": "false serves offVariant and skips everything else.",
+          "type": "boolean"
+        },
+        "variants": {
+          "description": "Variant name to the value served for it.",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": { "type": ["boolean", "string", "number", "object"] }
+        },
+        "defaultVariant": {
+          "description": "Served when the flag is on and nothing matched. Must name a variant.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "offVariant": {
+          "description": "Served when the flag is off or a prerequisite fails. Must name a variant.",
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "prerequisites": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/prerequisite" } }
+          ]
+        },
+        "targets": {
+          "anyOf": [{ "type": "null" }, { "type": "array", "items": { "$ref": "#/$defs/target" } }]
+        },
+        "allocation": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/allocation" }]
+        },
+        "rules": {
+          "anyOf": [{ "type": "null" }, { "type": "array", "items": { "$ref": "#/$defs/rule" } }]
+        },
+        "rollout": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/rollout" }]
+        },
+        "metadata": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": { "type": ["boolean", "string", "number"] }
+            }
+          ]
+        },
+        "salt": {
+          "description": "Bucketing salt. Defaults to the key; changing it reshuffles every split of the flag.",
+          "$ref": "#/$defs/optionalString"
+        },
+        "version": {
+          "description": "An analytics label carried on impressions.",
+          "type": ["number", "null"]
+        }
+      }
+    },
+    "prerequisite": {
+      "type": "object",
+      "required": ["flag", "variants"],
+      "properties": {
+        "flag": { "$ref": "#/$defs/nonEmptyString" },
+        "variants": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["variant", "keys"],
+      "properties": {
+        "variant": { "$ref": "#/$defs/nonEmptyString" },
+        "keys": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+      }
+    },
+    "allocation": {
+      "type": "object",
+      "required": ["percent"],
+      "properties": {
+        "percent": { "type": "number", "minimum": 0, "maximum": 100 },
+        "bucketBy": { "$ref": "#/$defs/optionalString" },
+        "seed": { "$ref": "#/$defs/optionalString" }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "conditions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "conditions": { "type": "array", "items": { "$ref": "#/$defs/condition" } },
+        "variant": { "$ref": "#/$defs/optionalString" },
+        "rollout": {
+          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/rollout" }]
+        }
+      },
+      "anyOf": [
+        { "required": ["variant"], "properties": { "variant": { "type": "string" } } },
+        {
+          "required": ["rollout"],
+          "properties": {
+            "rollout": {
+              "anyOf": [
+                { "type": "array", "minItems": 1 },
+                {
+                  "type": "object",
+                  "properties": { "buckets": { "type": "array", "minItems": 1 } }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "rollout": {
+      "anyOf": [{ "$ref": "#/$defs/bucketList" }, { "$ref": "#/$defs/split" }]
+    },
+    "bucketList": { "type": "array", "items": { "$ref": "#/$defs/bucket" } },
+    "split": {
+      "type": "object",
+      "required": ["buckets"],
+      "properties": {
+        "buckets": { "$ref": "#/$defs/bucketList" },
+        "bucketBy": { "$ref": "#/$defs/optionalString" },
+        "seed": { "$ref": "#/$defs/optionalString" }
+      }
+    },
+    "bucket": {
+      "type": "object",
+      "required": ["variant", "weight"],
+      "properties": {
+        "variant": { "$ref": "#/$defs/nonEmptyString" },
+        "weight": { "type": "number", "minimum": 0 }
+      }
+    },
+    "condition": {
+      "type": "object",
+      "required": ["operator"],
+      "properties": {
+        "operator": {
+          "enum": [
+            "exists",
+            "notExists",
+            "eq",
+            "neq",
+            "in",
+            "notIn",
+            "contains",
+            "startsWith",
+            "endsWith",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "semverEq",
+            "semverGt",
+            "semverGte",
+            "semverLt",
+            "semverLte",
+            "inSegment",
+            "notInSegment"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "$ref": "#/$defs/segmentOperator" },
+          "then": {
+            "required": ["segments"],
+            "properties": {
+              "segments": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+            }
+          },
+          "else": {
+            "required": ["attribute"],
+            "properties": { "attribute": { "$ref": "#/$defs/nonEmptyString" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "operator": { "enum": ["eq", "neq"] } },
+            "required": ["operator"]
+          },
+          "then": {
+            "required": ["value"],
+            "properties": { "value": { "type": ["string", "number", "boolean"] } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "operator": { "enum": ["in", "notIn"] } },
+            "required": ["operator"]
+          },
+          "then": {
+            "required": ["value"],
+            "properties": {
+              "value": { "type": "array", "items": { "type": ["string", "number"] } }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": { "operator": { "enum": ["contains", "startsWith", "endsWith"] } },
+            "required": ["operator"]
+          },
+          "then": { "required": ["value"], "properties": { "value": { "type": "string" } } }
+        },
+        {
+          "if": {
+            "properties": { "operator": { "enum": ["gt", "gte", "lt", "lte"] } },
+            "required": ["operator"]
+          },
+          "then": { "required": ["value"], "properties": { "value": { "type": "number" } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": { "enum": ["semverEq", "semverGt", "semverGte", "semverLt", "semverLte"] }
+            },
+            "required": ["operator"]
+          },
+          "then": {
+            "required": ["value"],
+            "properties": {
+              "value": {
+                "description": "A semantic version. A leading v and a short core such as 2.1 are accepted.",
+                "type": "string",
+                "pattern": "^v?\\d+(?:\\.\\d+)?(?:\\.\\d+)?(?:-[\\dA-Za-z-]+(?:\\.[\\dA-Za-z-]+)*)?(?:\\+[\\dA-Za-z-]+(?:\\.[\\dA-Za-z-]+)*)?$"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "segmentOperator": {
+      "required": ["operator"],
+      "properties": { "operator": { "enum": ["inSegment", "notInSegment"] } }
+    },
+    "segment": {
+      "type": "object",
+      "required": ["key"],
+      "properties": {
+        "key": { "$ref": "#/$defs/nonEmptyString" },
+        "included": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/stringList" }] },
+        "excluded": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/stringList" }] },
+        "rules": {
+          "anyOf": [
+            { "type": "null" },
+            { "type": "array", "items": { "$ref": "#/$defs/segmentRule" } }
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "required": ["included"],
+          "properties": { "included": { "type": "array", "minItems": 1 } }
+        },
+        {
+          "required": ["excluded"],
+          "properties": { "excluded": { "type": "array", "minItems": 1 } }
+        },
+        { "required": ["rules"], "properties": { "rules": { "type": "array", "minItems": 1 } } }
+      ]
+    },
+    "segmentRule": {
+      "type": "object",
+      "required": ["id", "conditions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/nonEmptyString" },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/condition",
+            "not": { "$ref": "#/$defs/segmentOperator" }
+          }
+        }
+      }
+    }
+  }
+}

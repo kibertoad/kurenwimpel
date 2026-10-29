@@ -240,6 +240,20 @@ worth relying on:
 A ruleset payload is an array of flags, a key-to-definition object, or the
 document form `{ "flags": [...], "segments": [...] }` once segments are in play.
 
+`@kurenwimpel/core/ruleset.schema.json` is a JSON Schema for all three shapes.
+Point a document at it with `"$schema"` for editor completion, or validate with it
+in CI. The document form also takes an optional `schemaVersion`; see
+[ADR 0010](docs/adr/0010-ruleset-schema.md) for when it changes.
+
+```json
+{
+  "$schema": "https://unpkg.com/@kurenwimpel/core/schema/ruleset.schema.json",
+  "schemaVersion": 1,
+  "flags": [],
+  "segments": []
+}
+```
+
 Operators: `exists`, `notExists`, `eq`, `neq`, `in`, `notIn`, `contains`,
 `startsWith`, `endsWith`, `gt`, `gte`, `lt`, `lte`, `semverEq`, `semverGt`,
 `semverGte`, `semverLt`, `semverLte`, `inSegment`, `notInSegment`.
@@ -342,6 +356,10 @@ fails.
   reported; the rest of the flag or segment still loads. Such a rule matches
   nobody either way, so dropping it decides nothing differently — and it avoids
   the same `FLAG_NOT_FOUND` outage.
+- A **document with a newer `schemaVersion`** than the SDK's
+  `SUPPORTED_SCHEMA_VERSION` still loads, with one issue at `schemaVersion`.
+  Whatever the older SDK cannot read fails closed, and the issue on every
+  refresh says the SDK is behind.
 - **Per-flag evaluation** never throws. Unknown key, missing variant, wrong
   type, absent targeting key, a prerequisite cycle, or a hand-built definition
   the parser never saw all return the caller's default plus an `errorCode` on

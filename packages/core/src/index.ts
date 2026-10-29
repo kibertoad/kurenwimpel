@@ -74,6 +74,7 @@ export type {
   ParseRulesetResult,
   ParseSegmentsResult,
 } from './parsing/ruleset.js';
+export { SUPPORTED_SCHEMA_VERSION } from './parsing/schema-version.js';
 export { parseSegmentDefinition } from './parsing/segment.js';
 
 // runtime
