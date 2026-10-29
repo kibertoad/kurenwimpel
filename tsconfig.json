@@ -4,6 +4,7 @@
     { "path": "./packages/core/tsconfig.build.json" },
     { "path": "./packages/cli/tsconfig.build.json" },
     { "path": "./packages/cloudflare/tsconfig.build.json" },
+    { "path": "./packages/control-plane-contract/tsconfig.build.json" },
     { "path": "./packages/node/tsconfig.build.json" },
     { "path": "./packages/ofrep/tsconfig.build.json" }
   ]
