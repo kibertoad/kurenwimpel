@@ -42,6 +42,28 @@ importers:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1)(yaml@2.9.0))
 
+  packages/cli:
+    dependencies:
+      '@kurenwimpel/core':
+        specifier: workspace:^
+        version: link:../core
+    devDependencies:
+      '@stryker-mutator/core':
+        specifier: ^10.0.0
+        version: 10.0.0(@types/node@26.2.0)
+      '@stryker-mutator/vitest-runner':
+        specifier: ^10.0.0
+        version: 10.0.0(@stryker-mutator/core@10.0.0(@types/node@26.2.0))(vitest@4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1)(yaml@2.9.0)))
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+      vitest:
+        specifier: ^4.1.11
+        version: 4.1.11(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.1)(yaml@2.9.0))
+
   packages/cloudflare:
     dependencies:
       '@kurenwimpel/core':

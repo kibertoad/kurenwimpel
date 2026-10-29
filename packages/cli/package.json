@@ -1,0 +1,51 @@
+{
+  "name": "@kurenwimpel/cli",
+  "version": "0.0.0",
+  "description": "Command line tool to validate, diff and explain kurenwimpel rulesets.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kibertoad/kurenwimpel.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "kurenwimpel": "./dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc --build tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:mutation": "stryker run",
+    "clean": "rimraf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@kurenwimpel/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
