@@ -223,4 +223,8 @@ Precision is one minute, against several minutes for the GitHub scheduler.
 
 ## Follow-up work
 
-FOLLOWUPS
+- #40: the storage port and the D1 adapter.
+- #41: OIDC, role bindings, SDK keys and the OFREP `authorize` helper.
+- #42: the service that serves the contract, the publisher entry point and
+  the scheduler.
+- #43: the UI.
