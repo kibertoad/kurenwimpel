@@ -34,13 +34,16 @@
     "clean": "rimraf dist *.tsbuildinfo"
   },
   "dependencies": {
-    "@kurenwimpel/core": "workspace:^"
+    "@kurenwimpel/core": "workspace:^",
+    "@kurenwimpel/ofrep-server": "workspace:^"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@kurenwimpel/ofrep": "workspace:^",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11",
-    "wrangler": "^4.125.0"
+    "wrangler": "^4.125.0",
+    "zod": "^4.4.3"
   },
   "engines": {
     "node": ">=22.12.0"

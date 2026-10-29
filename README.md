@@ -27,16 +27,18 @@ applies to the request, user or tenant in front of it.
 
 ## Layout
 
-| Package                   | Directory             | What it is                                                       |
-| ------------------------- | --------------------- | ---------------------------------------------------------------- |
-| `@kurenwimpel/core`       | `packages/core`       | Runtime-agnostic engine. Zero dependencies, no platform globals. |
-| `@kurenwimpel/cloudflare` | `packages/cloudflare` | Workers wrapper: KV-backed provider, isolate-scoped client.      |
-| `@kurenwimpel/node`       | `packages/node`       | Node wrapper: file and HTTP providers, polling client.           |
-| `@kurenwimpel/ofrep`      | `packages/ofrep`      | The OpenFeature remote evaluation protocol, as an API contract.  |
+| Package                     | Directory               | What it is                                                       |
+| --------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `@kurenwimpel/core`         | `packages/core`         | Runtime-agnostic engine. Zero dependencies, no platform globals. |
+| `@kurenwimpel/cloudflare`   | `packages/cloudflare`   | Workers wrapper: KV-backed provider, isolate-scoped client.      |
+| `@kurenwimpel/node`         | `packages/node`         | Node wrapper: file and HTTP providers, polling client.           |
+| `@kurenwimpel/ofrep`        | `packages/ofrep`        | The OpenFeature remote evaluation protocol, as an API contract.  |
+| `@kurenwimpel/ofrep-server` | `packages/ofrep-server` | Serves OFREP from a client, as one Fetch API handler.            |
 
 Both wrappers re-export the core, so a service only ever imports one package.
-`@kurenwimpel/ofrep` stands apart from all three: it is a specification rather than
-an implementation, and depends on none of them.
+`@kurenwimpel/ofrep` stands apart from the rest: it is a specification rather than
+an implementation, and depends on none of them. `@kurenwimpel/ofrep-server` joins it
+to the core.
 
 The core's source is grouped by role — `model/` (domain types), `evaluation/`
 (pure decision functions), `parsing/` (validation for untrusted JSON), and
@@ -389,10 +391,23 @@ pnpm --filter @kurenwimpel/ofrep run spec:check  # is the vendored copy current?
 ```
 
 OFREP is the HTTP layer between an OpenFeature provider and a flag management
-system. Serving it means every community-maintained OFREP provider — in any
-language — can read flags from this project without a bespoke SDK.
+system. Serving it means every community-maintained OFREP provider, in any
+language, can read flags from this project without a bespoke SDK.
 
-Nothing implements it yet, but the core's model is OFREP-expressible by
+`@kurenwimpel/ofrep-server` serves both evaluation routes from a
+`FeatureFlagClient` as one Fetch API handler, and `createOfrepWorker` in
+`@kurenwimpel/cloudflare` puts it on Workers over KV. `authorize` is mandatory,
+and `bulkFilter` keeps server-only flags away from client-side SDKs; see
+[its security notes](packages/ofrep-server/README.md#security).
+
+```ts
+export default createOfrepWorker<Env>({
+  provider: (env) => new KvFlagProvider({ namespace: env.FLAGS }),
+  authorize: (request, env) => request.headers.get('x-api-key') === env.OFREP_API_KEY,
+});
+```
+
+The core's model is OFREP-expressible by
 construction ([ADR 0003](docs/adr/0003-ofrep-shaped-model.md)): the context is
 the wire's flat shape, variant values exclude what the wire cannot carry, the
 reason vocabulary matches where the protocol has names, and `toOfrepReason` /
